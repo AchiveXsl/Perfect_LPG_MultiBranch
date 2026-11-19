@@ -39,3 +39,15 @@ Record PASS / FAIL and the exact error in the Status column.
 | MB-21 | Reports | Customer Balances by Branch, All branches | One column per branch plus Combined; opening only under the home branch | |
 | MB-22 | Reports | Sign in as `cash2` (no REPORT_ALL_BRANCHES) and add `?branches=all` to a report URL | Still shows B2 only | |
 | MB-23 | Security | At B2 open `/sales/details/{id}` of a Head Office sale | Not found | |
+
+## Progress
+
+Automated: `tests/e2e/multibranch.spec.mjs` (run on a fresh database: schema.sql, then the migrations run from the login page).
+`LPG_SLOWMO=0 npx playwright test tests/e2e/multibranch.spec.mjs --reporter=line`
+
+| Date | Environment | Result |
+|---|---|---|
+| 2026-11-19 | PHP 8.5.12 + Apache 2.4.71 + MySQL 8.4.13 (same lines as the installer), fresh DB | 14 / 14 passed: MB-00, setup, MB-01–08, MB-12, MB-13, MB-16–18, MB-20, MB-22 |
+
+Not automated yet (test by hand): MB-09, MB-10, MB-11 (credit through POS), MB-14, MB-15, MB-19, MB-21 opening-balance detail, MB-23.
+Bug found and fixed by this run: customer list and Customer Receipts crashed with `Class "AppModelsCustomerModel" not found` (namespace backslashes lost in an edit).
