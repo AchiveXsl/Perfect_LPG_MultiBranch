@@ -5,9 +5,20 @@ use RuntimeException;
 class PurchaseService{
  protected $db; protected $inv; protected $cash; protected $cylinders;
  public function __construct(){ $this->db=Database::connect(); $this->inv=new InventoryService(); $this->cash=new CashService(); $this->cylinders=new CylinderUnitService(); }
+ /**
+  * Post a purchase. $locationId is the branch entering it (the Head Office): it owns the purchase, the supplier
+  * payable and any cash paid. Each line's stock is received at its own receive_location_id (default: $locationId).
+  */
  public function post(array $p,int $userId,int $locationId):array{
-  (new CostService())->ensureReady($locationId);
   $supplierId=(int)($p['supplier_id']??0); $lines=$p['lines']??[]; $payments=$p['payments']??[];
+  $activeBranches=array_map('intval',array_column(BranchContext::allActive(),'id'));
+  $receiveAt=[];
+  foreach((array)$lines as $i=>$l){
+   $dest=(int)($l['receive_location_id']??0) ?: $locationId;
+   if(!in_array($dest,$activeBranches,true)) throw new RuntimeException('Purchase line '.($i+1).': select an active branch to receive the stock.');
+   $receiveAt[$i]=$dest;
+  }
+  foreach(array_unique(array_merge([$locationId],array_values($receiveAt))) as $loc) (new CostService())->ensureReady((int)$loc);
   if(!$supplierId||!$lines) throw new RuntimeException('Supplier and purchase lines are required.');
   $supplier=$this->db->table('suppliers')->where('id',$supplierId)->get()->getRowArray();
   if(!$supplier||(int)$supplier['is_active']!==1) throw new RuntimeException('Supplier is invalid or inactive.');
@@ -32,8 +43,8 @@ class PurchaseService{
    }
 
    $lineTotal=$qty*$rate;$subtotal+=$lineTotal;
-   $prepared[]=['line_no'=>$i+1,'line_type'=>$type,'cylinder_type_id'=>$ct,'quantity'=>$qty,'actual_gas_weight_kg'=>$actual,'unit_rate'=>$rate,'line_total'=>$lineTotal];
-   $inventory[]=['inventory_type'=>$type,'cylinder_type_id'=>$ct,'quantity'=>$qty,'actual_gas_weight_kg'=>$actual];
+   $prepared[]=['line_no'=>$i+1,'receive_location_id'=>$receiveAt[$i],'line_type'=>$type,'cylinder_type_id'=>$ct,'quantity'=>$qty,'actual_gas_weight_kg'=>$actual,'unit_rate'=>$rate,'line_total'=>$lineTotal];
+   $inventory[]=['location_id'=>$receiveAt[$i],'inventory_type'=>$type,'cylinder_type_id'=>$ct,'quantity'=>$qty,'actual_gas_weight_kg'=>$actual];
   }
   $discount=max(0,(float)($p['discount_amount']??0));if($discount>$subtotal)throw new RuntimeException('Discount exceeds subtotal.');
   $total=$subtotal-$discount;$paid=0;$normalizedPayments=[];
@@ -53,7 +64,7 @@ class PurchaseService{
   try{
    $supplier=$this->db->query('SELECT * FROM suppliers WHERE id=? FOR UPDATE',[$supplierId])->getRowArray();
    if($credit>0){$currentCredit=$this->supplierBalance($supplierId,$locationId);if($currentCredit+$credit>(float)$supplier['credit_limit'])throw new RuntimeException('Supplier credit limit exceeded.');}
-   foreach($inventory as $m){if($m['inventory_type']!=='refill_empty'&&$this->inv->stock($locationId,$m['inventory_type'],$m['cylinder_type_id'])<0)throw new RuntimeException('Invalid inventory state.');}
+   foreach($inventory as $m){if($m['inventory_type']!=='refill_empty'&&$this->inv->stock((int)$m['location_id'],$m['inventory_type'],$m['cylinder_type_id'])<0)throw new RuntimeException('Invalid inventory state.');}
    $no='P'.date('YmdHis').'-'.random_int(100,999);
    $this->db->table('purchases')->insert(['purchase_no'=>$no,'location_id'=>$locationId,'supplier_id'=>$supplierId,'plant_id'=>$plantId,'status'=>'posted','transaction_at'=>date('Y-m-d H:i:s'),'subtotal'=>$subtotal,'discount_amount'=>$discount,'total_amount'=>$total,'credit_amount'=>$credit,'notes'=>trim((string)($p['notes']??''))?:null,'created_by'=>$userId]);$id=(int)$this->db->insertID();
    $purchaseLineIds=[];
@@ -64,7 +75,7 @@ class PurchaseService{
    }
    foreach($inventory as $index=>$m){
     $this->inv->receivePurchase(
-      $locationId,
+      (int)$m['location_id'],
       $m['inventory_type'],
       $m['cylinder_type_id'],
       (float)$m['quantity'],
@@ -86,22 +97,21 @@ class PurchaseService{
    $this->db->transCommit();AuditService::log('CREATE','purchase',$id,null,['purchase_no'=>$no,'total'=>$total,'amount_paid'=>$paid,'current_credit'=>$credit,'previous_payable'=>$previousPayable,'new_payable'=>$newPayable],$userId,$locationId);return ['id'=>$id,'purchase_no'=>$no,'total'=>$total,'previous_payable'=>$previousPayable,'amount_paid'=>$paid,'balance_payable'=>$newPayable];
   }catch(\Throwable $e){$this->db->transRollback();throw $e;}
  }
+ /**
+  * Supplier payable. Purchasing is central, so a supplier has one account across all branches:
+  * every purchase and supplier payment counts, whichever branch recorded it. $locationId is kept for callers
+  * written before branches and is ignored.
+  */
  public function supplierBalance(int $supplierId, ?int $locationId=null): float
  {
-  $locationId=$locationId ?? (int)(session()->get('location_id') ?? 0);
-
   // credit_amount is already the unpaid portion of each posted purchase,
   // so purchase payments must NOT be subtracted again here.
   $s=$this->db->table('purchases')->selectSum('credit_amount','credit')
-   ->where('supplier_id',$supplierId)->where('status','posted');
-  if($locationId>0) $s->where('location_id',$locationId);
-  $s=$s->get()->getRowArray();
+   ->where('supplier_id',$supplierId)->where('status','posted')->get()->getRowArray();
 
   // These are only payments made against an older supplier payable.
   $ap=$this->db->table('supplier_payments')->selectSum('amount','account_paid')
-   ->where('supplier_id',$supplierId)->where('status','posted');
-  if($locationId>0) $ap->where('location_id',$locationId);
-  $ap=$ap->get()->getRowArray();
+   ->where('supplier_id',$supplierId)->where('status','posted')->get()->getRowArray();
 
   $supplier=$this->db->table('suppliers')->where('id',$supplierId)->get()->getRowArray();
   return (float)($supplier['opening_balance']??0)
@@ -221,7 +231,9 @@ class PurchaseService{
    }
 
    foreach($refilledUnits as $unitId=>$lastMovementId){
-    $unit=$this->db->query('SELECT * FROM cylinder_units WHERE id=? AND location_id=? FOR UPDATE',[$unitId,$locationId])->getRowArray();
+    // The unit sits at the line's receiving branch, which may differ from the Head Office that entered the purchase.
+    // Any later movement (sale, transfer, adjustment) blocks the void below.
+    $unit=$this->db->query('SELECT * FROM cylinder_units WHERE id=? FOR UPDATE',[$unitId])->getRowArray();
     if(!$unit) throw new RuntimeException('Refilled physical cylinder '.$unitId.' could not be found.');
     $later=(int)$this->db->table('inventory_movements')->where('cylinder_unit_id',$unitId)->where('id >',$lastMovementId)->countAllResults();
     if($later>0 || $unit['status']!=='filled'){
@@ -235,8 +247,8 @@ class PurchaseService{
      'SELECT cu.*,ct.code cylinder_code,ct.name cylinder_name,ct.capacity_kg
       FROM cylinder_units cu
       JOIN cylinder_types ct ON ct.id=cu.cylinder_type_id
-      WHERE cu.id=? AND cu.location_id=? FOR UPDATE',
-     [$unitId,$locationId]
+      WHERE cu.id=? FOR UPDATE',
+     [$unitId]
     )->getRowArray();
     if(!$unit) throw new RuntimeException('Purchased physical cylinder '.$unitId.' could not be found.');
 

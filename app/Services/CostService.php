@@ -43,8 +43,14 @@ class CostService
         }
         $this->db->transBegin();
         try {
-            foreach ($this->db->table('purchases')->select('id')->where(['location_id' => $locationId, 'status' => 'posted'])->get()->getResultArray() as $p) {
-                $this->addPurchaseLayers((int) $p['id'], false);
+            // Purchases with at least one line received at this branch (the Head Office enters purchases for every branch).
+            $purchaseIds = $this->db->query(
+                "SELECT DISTINCT p.id FROM purchases p JOIN purchase_items pi ON pi.purchase_id=p.id
+                 WHERE p.status='posted' AND COALESCE(pi.receive_location_id,p.location_id)=?",
+                [$locationId]
+            )->getResultArray();
+            foreach ($purchaseIds as $p) {
+                $this->addPurchaseLayers((int) $p['id'], false, $locationId);
             }
             foreach ($this->db->table('inventory_opening_balances')->select('id')->where('location_id', $locationId)->get()->getResultArray() as $o) {
                 $this->syncOpening((int) $o['id'], $locationId, false);
@@ -75,21 +81,26 @@ class CostService
         }
     }
 
-    /** Layers for the lines of one purchase. Safe to call again. */
-    public function addPurchaseLayers(int $purchaseId, bool $fresh = true): void
+    /**
+     * Layers for the lines of one purchase, each at the branch that received the line. Safe to call again.
+     * $onlyLocationId limits it to the lines received at one branch.
+     */
+    public function addPurchaseLayers(int $purchaseId, bool $fresh = true, ?int $onlyLocationId = null): void
     {
         $p = $this->db->table('purchases')->where('id', $purchaseId)->get()->getRowArray();
         if (!$p) return;
         foreach ($this->db->table('purchase_items')->where('purchase_id', $purchaseId)->get()->getResultArray() as $it) {
+            $loc = (int) ($it['receive_location_id'] ?? 0) ?: (int) $p['location_id'];
+            if ($onlyLocationId !== null && $loc !== $onlyLocationId) continue;
             $type = (string) $it['line_type'];
             $qty = (float) $it['quantity'];
             $total = (float) $it['line_total'];
             if ($qty <= 0) continue;
             if ($type === 'empty_cylinder') {
-                $this->insertLayer((int) $p['location_id'], 'cylinder', (int) $it['cylinder_type_id'], 'purchase', $purchaseId, (int) $it['id'], (string) $p['transaction_at'], $qty, $total / $qty, $fresh);
+                $this->insertLayer($loc, 'cylinder', (int) $it['cylinder_type_id'], 'purchase', $purchaseId, (int) $it['id'], (string) $p['transaction_at'], $qty, $total / $qty, $fresh);
             } else {
                 $kg = $type === 'gas_kg' ? $qty : $qty * (float) $it['actual_gas_weight_kg'];
-                if ($kg > 0) $this->insertLayer((int) $p['location_id'], 'gas', null, 'purchase', $purchaseId, (int) $it['id'], (string) $p['transaction_at'], $kg, $total / $kg, $fresh);
+                if ($kg > 0) $this->insertLayer($loc, 'gas', null, 'purchase', $purchaseId, (int) $it['id'], (string) $p['transaction_at'], $kg, $total / $kg, $fresh);
             }
         }
     }

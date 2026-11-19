@@ -95,8 +95,8 @@ $groups=[
         'label'=>'Purchasing',
         'icon'=>'bi-bag-check',
         'items'=>[
-            ['permission'=>'PURCHASE_MANAGE','url'=>'purchases','label'=>'Purchases','icon'=>'bi-bag-plus'],
-            ['permission'=>'PURCHASE_MANAGE','url'=>'supplier-payments','label'=>'Supplier Payments','icon'=>'bi-credit-card'],
+            ['permission'=>'PURCHASE_MANAGE','url'=>'purchases','label'=>'Purchases','icon'=>'bi-bag-plus','head_office'=>true],
+            ['permission'=>'PURCHASE_MANAGE','url'=>'supplier-payments','label'=>'Supplier Payments','icon'=>'bi-credit-card','head_office'=>true],
         ],
     ],
     'inventory'=>[
@@ -154,7 +154,10 @@ $groups=[
 ];
 
 foreach($groups as $groupKey=>&$group){
-    $group['items']=array_values(array_filter($group['items'],static function(array $item) use ($can): bool {
+    $atHeadOffice=\App\Services\BranchContext::isHeadOffice();
+    $group['items']=array_values(array_filter($group['items'],static function(array $item) use ($can,$atHeadOffice): bool {
+        // Central purchasing: these pages exist only while working in the Head Office.
+        if(!empty($item['head_office']) && !$atHeadOffice) return false;
         $required=$item['permission'];
         return is_array($required) ? (bool) array_filter($required,$can) : $can($required);
     }));

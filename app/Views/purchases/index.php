@@ -127,9 +127,10 @@
                     <table class="table table-borderless mb-0 stock-table">
                         <thead class="border-bottom">
                             <tr>
-                                <th class="ps-3" style="width:18%">Stock Type</th>
-                                <th style="width:16%">Cylinder Type</th>
-                                <th class="text-end" style="width:12%">Empty Available</th>
+                                <th class="ps-3" style="width:15%">Stock Type</th>
+                                <th style="width:14%">Cylinder Type</th>
+                                <th style="width:14%" title="Branch whose stock receives this line">Receive at</th>
+                                <th class="text-end" style="width:9%">Empty Available</th>
                                 <th class="text-end" style="width:10%">Quantity</th>
                                 <th class="text-end" style="width:16%">Actual Gas / Cylinder (KG)</th>
                                 <th class="text-end" style="width:15%">Cylinder Rate</th>
@@ -367,6 +368,7 @@
                                                                 <th>#</th>
                                                                 <th>Stock Type</th>
                                                                 <th>Cylinder Type</th>
+                                                                <th>Received at</th>
                                                                 <th class="text-end">Quantity</th>
                                                                 <th class="text-end">Actual Gas / Cylinder (KG)</th>
                                                                 <th class="text-end">Cylinder Rate</th>
@@ -379,6 +381,7 @@
                                                                     <td><?= (int) $item['line_no'] ?></td>
                                                                     <td><?= esc(ucwords(str_replace('_', ' ', $item['line_type']))) ?></td>
                                                                     <td><?= esc(trim(($item['cylinder_code'] ?? '') . ' ' . ($item['cylinder_name'] ?? '')) ?: '—') ?></td>
+                                                                    <td><?= esc($item['receive_location_name'] ?? '—') ?></td>
                                                                     <td class="text-end"><?= number_format((float) $item['quantity'], 2) ?></td>
                                                                     <td class="text-end">
                                                                         <?= in_array($item['line_type'], ['filled_cylinder', 'refill_empty'], true) ? number_format((float) $item['actual_gas_weight_kg'], 2) : '—' ?>
@@ -493,7 +496,11 @@
 const canVoidPurchases = <?= json_encode($canVoidPurchases ?? false) ?>;
 const types = <?= json_encode($types) ?>;
 const supplierBalances = <?= json_encode($supplierBalances ?? []) ?>;
+// Empty cylinders on hand per branch: emptyStock[branchId][cylinderTypeId].
 const emptyStock = <?= json_encode((object) $emptyStock) ?>;
+const receiveBranches = <?= json_encode(array_map(static fn($b) => ['id' => (int) $b['id'], 'name' => $b['name'], 'ho' => (int) $b['is_head_office']], $branches ?? [])) ?>;
+const defaultReceiveBranch = <?= (int) ($headOfficeId ?? 0) ?>;
+const emptyAt = (branchId, typeId) => Number((emptyStock[branchId] || {})[typeId] || 0);
 const supplierLimits = <?= json_encode(array_column($suppliers, 'credit_limit', 'id')) ?>;
 const plants = <?= json_encode($plants ?? []) ?>;
 
@@ -553,6 +560,11 @@ function addLine() {
             </select>
         </td>
         <td>
+            <select class="form-select dest">
+                ${receiveBranches.map(b => `<option value="${b.id}" ${b.id === defaultReceiveBranch ? 'selected' : ''}>${b.name.replace(/</g, '&lt;')}${b.ho ? ' (HO)' : ''}</option>`).join('')}
+            </select>
+        </td>
+        <td>
             <input class="form-control emptyAvail text-end" type="text" value="—" readonly tabindex="-1">
         </td>
         <td>
@@ -607,25 +619,28 @@ function addLine() {
 function checkEmptyStock() {
     const requested = {};
     const rows = [...document.querySelectorAll('.line')];
+    // Refill uses the empty cylinders of the receiving branch, so availability is per branch + cylinder type.
+    const keyOf = row => row.querySelector('.dest').value + ':' + row.querySelector('.cyl').value;
+    const availOf = key => { const [b, t] = key.split(':'); return emptyAt(b, t); };
     rows.forEach(row => {
         const id = row.querySelector('.cyl').value;
-        const avail = id ? Number(emptyStock[id] || 0) : null;
+        const avail = id ? availOf(keyOf(row)) : null;
         row.querySelector('.emptyAvail').value = avail === null ? '—' : avail;
         if (id && row.querySelector('.type').value === 'refill_empty') {
-            requested[id] = (requested[id] || 0) + Number(row.querySelector('.qty').value || 0);
+            requested[keyOf(row)] = (requested[keyOf(row)] || 0) + Number(row.querySelector('.qty').value || 0);
         }
     });
     rows.forEach(row => {
         const id = row.querySelector('.cyl').value;
         const isRefill = id && row.querySelector('.type').value === 'refill_empty';
-        const short = isRefill && requested[id] > Number(emptyStock[id] || 0);
+        const short = isRefill && requested[keyOf(row)] > availOf(keyOf(row));
         const qty = row.querySelector('.qty');
         const avail = row.querySelector('.emptyAvail');
         qty.classList.toggle('is-invalid', !!short);
         avail.classList.toggle('is-invalid', !!short);
         row.querySelector('.stockMsg').style.display = short ? 'block' : 'none';
     });
-    return !Object.keys(requested).some(id => requested[id] > Number(emptyStock[id] || 0));
+    return !Object.keys(requested).some(key => requested[key] > availOf(key));
 }
 
 function calculate() {
@@ -682,6 +697,7 @@ document.getElementById('purchaseForm').onsubmit = function () {
     const lines = [...document.querySelectorAll('.line')].map(row => ({
         line_type: row.querySelector('.type').value,
         cylinder_type_id: row.querySelector('.cyl').value,
+        receive_location_id: row.querySelector('.dest').value,
         quantity: row.querySelector('.qty').value,
         unit_rate: row.querySelector('.rate').value,
         actual_gas_weight_kg: row.querySelector('.actual').value

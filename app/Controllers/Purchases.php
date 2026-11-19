@@ -1,17 +1,31 @@
 <?php
 namespace App\Controllers;
 
+use App\Services\BranchContext;
 use App\Services\PurchaseService;
 use CodeIgniter\Controller;
 use Config\Database;
 
 class Purchases extends Controller
 {
+    /**
+     * Purchasing is central: purchases, supplier plants and voids are done while working in the Head Office.
+     * Each purchase line names the branch whose stock receives it.
+     */
     private function guard()
     {
-        return \App\Services\PermissionService::allows('PURCHASE_MANAGE')
-            ? null
-            : $this->response->setStatusCode(403)->setBody('Forbidden');
+        if (!\App\Services\PermissionService::allows('PURCHASE_MANAGE')) {
+            return $this->response->setStatusCode(403)->setBody('Forbidden');
+        }
+        if (!BranchContext::isHeadOffice()) {
+            $ho = BranchContext::find(BranchContext::headOfficeId());
+            $message = 'Purchases are entered at the Head Office' . ($ho ? ' (' . $ho['name'] . ')' : '') . '. Switch to the Head Office branch to purchase stock for any branch.';
+            if ($this->request->isAJAX()) {
+                return $this->response->setStatusCode(403)->setJSON(['success' => false, 'error' => $message]);
+            }
+            return redirect()->to('/dashboard')->with('error', $message);
+        }
+        return null;
     }
 
     public function index()
@@ -72,8 +86,9 @@ class Purchases extends Controller
                 $purchaseIds = array_map(static fn(array $row): int => (int) $row['id'], $history);
 
                 $items = $db->table('purchase_items pi')
-                    ->select('pi.purchase_id, pi.line_no, pi.line_type, pi.quantity, pi.actual_gas_weight_kg, pi.unit_rate, pi.line_total, ct.code AS cylinder_code, ct.name AS cylinder_name')
+                    ->select('pi.purchase_id, pi.line_no, pi.line_type, pi.quantity, pi.actual_gas_weight_kg, pi.unit_rate, pi.line_total, ct.code AS cylinder_code, ct.name AS cylinder_name, rl.name AS receive_location_name')
                     ->join('cylinder_types ct', 'ct.id = pi.cylinder_type_id', 'left')
+                    ->join('locations rl', 'rl.id = pi.receive_location_id', 'left')
                     ->whereIn('pi.purchase_id', $purchaseIds)
                     ->orderBy('pi.purchase_id', 'ASC')
                     ->orderBy('pi.line_no', 'ASC')
@@ -105,16 +120,18 @@ class Purchases extends Controller
             }
         }
 
+        // Empty cylinders on hand per branch and cylinder type: a refill line uses the receiving branch's empties.
+        $branches = BranchContext::allActive();
         $emptyStock = [];
         $emptyRows = $db->table('cylinder_units')
-            ->select('cylinder_type_id, COUNT(*) AS total')
-            ->where('location_id', (int) session()->get('location_id'))
+            ->select('location_id, cylinder_type_id, COUNT(*) AS total')
+            ->whereIn('location_id', array_map(static fn($b) => (int) $b['id'], $branches) ?: [0])
             ->where('status', 'empty')
-            ->groupBy('cylinder_type_id')
+            ->groupBy(['location_id', 'cylinder_type_id'])
             ->get()
             ->getResultArray();
         foreach ($emptyRows as $row) {
-            $emptyStock[(int) $row['cylinder_type_id']] = (int) $row['total'];
+            $emptyStock[(int) $row['location_id']][(int) $row['cylinder_type_id']] = (int) $row['total'];
         }
 
         return view('purchases/index', [
@@ -129,6 +146,8 @@ class Purchases extends Controller
             'plants'           => $db->table('supplier_plants')->where('is_active', 1)->orderBy('name')->get()->getResultArray(),
             'canVoidPurchases' => $canVoidPurchases,
             'emptyStock'       => $emptyStock,
+            'branches'         => $branches,
+            'headOfficeId'     => BranchContext::headOfficeId(),
             'types'            => $db->table('cylinder_types')
                 ->where('is_active', 1)
                 ->orderBy('sort_order')
