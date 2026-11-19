@@ -8,6 +8,15 @@ class PermissionService
 {
     protected static ?array $permissionCache = null;
     protected static ?int $permissionCacheUserId = null;
+    protected static ?int $permissionCacheLocationId = null;
+
+    /** Forget the cached permissions, e.g. after the branch changed. */
+    public static function reset(): void
+    {
+        self::$permissionCache = null;
+        self::$permissionCacheUserId = null;
+        self::$permissionCacheLocationId = null;
+    }
 
     /**
      * Keep standard role permissions usable on older installations.
@@ -41,6 +50,9 @@ class PermissionService
             'USER_MANAGE' => 'Manage users',
             'AUDIT_VIEW' => 'View audit log',
             'BACKUP_MANAGE' => 'Create and restore database backups',
+            'BRANCH_MANAGE' => 'Manage branches',
+            'STOCK_TRANSFER' => 'Transfer stock between branches',
+            'REPORT_ALL_BRANCHES' => 'View reports for all branches combined',
         ];
 
         foreach ($permissions as $code => $name) {
@@ -52,7 +64,7 @@ class PermissionService
 
         $roleDefaults = [
             'ADMIN' => array_keys($permissions),
-            'MANAGER' => array_values(array_diff(array_keys($permissions), ['USER_MANAGE'])),
+            'MANAGER' => array_values(array_diff(array_keys($permissions), ['USER_MANAGE', 'BRANCH_MANAGE', 'REPORT_ALL_BRANCHES'])),
             'CASHIER' => ['DASHBOARD_VIEW', 'POS_SALE', 'POS_HISTORY', 'CUSTOMER_MANAGE', 'REPORT_VIEW'],
         ];
 
@@ -81,16 +93,27 @@ class PermissionService
         }
     }
 
+    /**
+     * Permissions of the role the user holds at the current branch.
+     * Before a branch is chosen there are none (the branch picker needs no permission).
+     */
     public static function all(): array
     {
         $userId=(int)(session()->get('user_id') ?? 0);
+        $locationId=BranchContext::currentId();
 
-        if (self::$permissionCache !== null && self::$permissionCacheUserId === $userId) {
+        if (self::$permissionCache !== null && self::$permissionCacheUserId === $userId && self::$permissionCacheLocationId === $locationId) {
             return self::$permissionCache;
         }
 
         self::$permissionCacheUserId = $userId;
-        if($userId<=0) {
+        self::$permissionCacheLocationId = $locationId;
+        if($userId<=0 || $locationId<=0) {
+            return self::$permissionCache=[];
+        }
+
+        $roleId=BranchContext::roleIdFor($userId,$locationId);
+        if($roleId<=0) {
             return self::$permissionCache=[];
         }
 
@@ -99,11 +122,10 @@ class PermissionService
         self::$permissionCache = array_values(array_unique(array_map(
             'strval',
             array_column(
-                Database::connect()->table('users u')
+                Database::connect()->table('role_permissions rp')
                     ->select('permissions.code')
-                    ->join('role_permissions rp','rp.role_id=u.role_id')
                     ->join('permissions','permissions.id=rp.permission_id')
-                    ->where('u.id',$userId)
+                    ->where('rp.role_id',$roleId)
                     ->get()
                     ->getResultArray(),
                 'code'

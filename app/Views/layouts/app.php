@@ -10,6 +10,13 @@ if (!$location && session()->get('location_id')) {
 }
 $branchName = trim((string)($location['name'] ?? ''));
 $branchName = $branchName !== '' ? $branchName : 'Perfect LPG';
+$currentBranchId = \App\Services\BranchContext::currentId();
+try {
+    $userBranches = \App\Services\BranchContext::branchesFor((int) session()->get('user_id'));
+} catch (\Throwable $e) {
+    $userBranches = [];
+}
+$currentBranch = $userBranches[$currentBranchId] ?? $location;
 $appSettings = (new \App\Models\ShopSettingsModel())->forLocation((int) session()->get('location_id'));
 $fontStacks = ['system'=>'system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif','arial'=>'Arial,sans-serif','verdana'=>'Verdana,sans-serif','tahoma'=>'Tahoma,sans-serif','trebuchet'=>'"Trebuchet MS",sans-serif','georgia'=>'Georgia,serif','times'=>'"Times New Roman",serif'];
 $fontFamilyKey = $appSettings['font_family'] ?? 'system';
@@ -59,6 +66,7 @@ body{background:var(--lpg-page);color:var(--lpg-text);-webkit-font-smoothing:ant
 <link rel="stylesheet" href="<?= base_url('css/lpg-theme.css') ?>?v=<?= (int) @filemtime(FCPATH . 'css/lpg-theme.css') ?>">
 <?= view('partials/i18n_head', ['uiLang' => $uiLang]) ?>
 <?php if (\App\Libraries\Diagnostics::enabled()): ?><script>window.lpgDiagConfig=<?= json_encode(['url' => site_url('diagnostics/client'), 'rid' => \App\Libraries\Diagnostics::requestId()], JSON_HEX_TAG | JSON_UNESCAPED_SLASHES) ?>;</script><script src="<?= base_url('js/lpg-diagnostics.js') ?>?v=<?= (int) @filemtime(FCPATH . 'js/lpg-diagnostics.js') ?>"></script><?php endif; ?>
+<script>window.lpgBranchId=<?= (int) $currentBranchId ?>;</script><script src="<?= base_url('js/lpg-branch-guard.js') ?>?v=<?= (int) @filemtime(FCPATH . 'js/lpg-branch-guard.js') ?>"></script>
 <script src="<?= base_url('js/lpg-busy.js') ?>?v=<?= (int) @filemtime(FCPATH . 'js/lpg-busy.js') ?>"></script><?= $this->renderSection('styles') ?><script>window.fmtMoney=(v,d=2)=>Number(v||0).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});window.parseMoney=v=>Number(String(v??'').replace(/,/g,''))||0;</script></head>
 <body class="theme-<?= esc($themeMode) ?> font-<?= esc($fontFamilyKey) ?>">
 <nav class="sidebar d-flex flex-column" id="sidebar"><div class="brand d-flex align-items-center"><i class="bi bi-fire me-2 flex-shrink-0"></i><div class="brand-text"><div class="fw-bold text-white"><?= esc($branchName) ?></div><div class="ls" style="font-size:.7rem;">LPG POS & ERP</div></div></div>
@@ -101,6 +109,7 @@ $groups=[
             ['permission'=>'INVENTORY_MANAGE','url'=>'inventory/fill-empty','label'=>'Fill / Empty Cylinders','icon'=>'bi-fuel-pump'],
             ['permission'=>'INVENTORY_MANAGE','url'=>'cylinder-types','label'=>'Cylinder Types','icon'=>'bi-box'],
             ['permission'=>'INVENTORY_MANAGE','url'=>'inventory/adjustments','label'=>'Stock Adjustment & History','icon'=>'bi-sliders2-vertical'],
+            ['permission'=>'STOCK_TRANSFER','url'=>'stock-transfers','label'=>'Stock Transfers','icon'=>'bi-arrow-left-right'],
             ['permission'=>'INVENTORY_CONTROLS_MANAGE','url'=>'inventory/controls','label'=>'Inventory Controls','icon'=>'bi-sliders'],
             ['permission'=>'GAS_WASTAGE_MANAGE','url'=>'inventory/wastage','label'=>'Gas Wastage','icon'=>'bi-droplet-half'],
         ],
@@ -135,6 +144,7 @@ $groups=[
         'icon'=>'bi-gear',
         'items'=>[
             ['permission'=>'RATE_MANAGE','url'=>'rates','label'=>'LPG Rates','icon'=>'bi-tags'],
+            ['permission'=>'BRANCH_MANAGE','url'=>'branches','label'=>'Branches','icon'=>'bi-diagram-3'],
             ['permission'=>'USER_MANAGE','url'=>'users','label'=>'Users / Roles','icon'=>'bi-person-gear'],
             ['permission'=>['USER_MANAGE','INVENTORY_MANAGE'],'url'=>'shop-settings','label'=>'Shop Settings','icon'=>'bi-gear-wide-connected'],
             ['permission'=>'BACKUP_MANAGE','url'=>'database-backup','label'=>'Database Backup & Restore','icon'=>'bi-database-gear'],
@@ -188,7 +198,7 @@ unset($group);
 </li>
 <?php endforeach; ?>
 </ul><div class="p-3 border-top border-white border-opacity-10"><a href="<?= site_url('logout') ?>" class="nav-link text-white-50" title="Logout"><i class="bi bi-box-arrow-right"></i><span class="menu-label">Logout</span></a></div></nav><div class="sidebar-backdrop" id="sidebarBackdrop"></div>
-<div class="main-content"><div class="topbar"><button class="btn btn-sm btn-outline-secondary sidebar-toggle tbtn" id="sidebarToggle" type="button" aria-label="Hide or show sidebar" title="Hide / Show menu"><i class="bi bi-layout-sidebar-inset"></i></button><h5 class="mb-0"><?= esc($title ?? 'Dashboard') ?></h5><div class="d-flex align-items-center gap-2"><?= view('partials/language_switch', ['uiLang' => $uiLang]) ?><span class="small"><?= esc($branchName) ?></span><span class="small" style="color:#B07A00;font-weight:600"><?= esc(session()->get('full_name')??'User') ?></span><span class="badge bg-secondary"><?= esc(session()->get('role')??'') ?></span></div></div>
+<div class="main-content"><div class="topbar"><button class="btn btn-sm btn-outline-secondary sidebar-toggle tbtn" id="sidebarToggle" type="button" aria-label="Hide or show sidebar" title="Hide / Show menu"><i class="bi bi-layout-sidebar-inset"></i></button><h5 class="mb-0"><?= esc($title ?? 'Dashboard') ?></h5><div class="d-flex align-items-center gap-2"><?= view('partials/language_switch', ['uiLang' => $uiLang]) ?><?= view('partials/branch_switch', ['userBranches' => $userBranches, 'currentBranchId' => $currentBranchId, 'branchName' => $branchName]) ?><span class="small" style="color:#B07A00;font-weight:600"><?= esc(session()->get('full_name')??'User') ?></span><span class="badge bg-secondary"><?= esc(session()->get('role')??'') ?></span></div></div>
 <div class="content-wrap"><?php
 $pendingMigrationNotice = null;
 try {

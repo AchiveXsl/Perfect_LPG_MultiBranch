@@ -4,6 +4,7 @@ namespace App\Controllers;
 
 use App\Libraries\UiLanguage;
 use App\Models\UserModel;
+use App\Services\BranchContext;
 use App\Services\MigrationRunnerService;
 use App\Services\InstallationSetupService;
 use CodeIgniter\Controller;
@@ -60,11 +61,13 @@ class Auth extends Controller
     protected function publicShopInfo(): array
     {
         try {
-            $row = \Config\Database::connect()->table('locations')
-                ->select('name,address,city,phone')
-                ->where('is_active', 1)
-                ->orderBy('id', 'ASC')
-                ->get(1)->getRowArray();
+            $db = \Config\Database::connect();
+            $q = $db->table('locations')->select('name,address,city,phone')->where('is_active', 1);
+            // The Head Office identifies the business on the sign-in page (column added by migration 044).
+            if ($db->fieldExists('is_head_office', 'locations')) {
+                $q->orderBy('is_head_office', 'DESC');
+            }
+            $row = $q->orderBy('id', 'ASC')->get(1)->getRowArray();
             return $row ?: [];
         } catch (\Throwable $e) {
             return [];
@@ -102,10 +105,15 @@ class Auth extends Controller
             return redirect()->back()->withInput()->with('error','This account has been disabled. Contact an administrator.');
         }
 
+        $branches=BranchContext::branchesFor((int)$user['id']);
+        if(!$branches){
+            return redirect()->back()->withInput()->with('error','No active branch is assigned to this account. Contact an administrator.');
+        }
+
         session()->regenerate();
         session()->set([
             'user_id'=>(int)$user['id'],
-            'location_id'=>$user['location_id'] !== null ? (int)$user['location_id'] : null,
+            'location_id'=>null,
             'full_name'=>$user['full_name'],
             'username'=>$user['username'],
             'role'=>$user['role'],
@@ -113,7 +121,13 @@ class Auth extends Controller
             'isLoggedIn'=>true,
         ]);
         $this->userModel->touchLastLogin((int)$user['id']);
-        return redirect()->to(site_url('dashboard'))->with('success','Welcome back, '.$user['full_name'].'.');
+
+        // One branch: straight in. More than one: the user picks a branch card first.
+        if(count($branches)===1){
+            BranchContext::enter((int)array_key_first($branches));
+            return redirect()->to(site_url('dashboard'))->with('success','Welcome back, '.$user['full_name'].'.');
+        }
+        return redirect()->to(site_url('branches/select'));
     }
 
     public function logout(): RedirectResponse

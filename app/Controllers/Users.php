@@ -5,6 +5,7 @@ namespace App\Controllers;
 use App\Models\PermissionModel;
 use App\Models\RoleModel;
 use App\Models\UserModel;
+use App\Services\BranchContext;
 use App\Services\PermissionService;
 use CodeIgniter\Controller;
 use Config\Database;
@@ -44,8 +45,17 @@ class Users extends Controller
             $map[(int)$row['role_id']][]=(int)$row['permission_id'];
         }
 
+        $assignments=[];
+        foreach($db->table('user_branches ub')->select('ub.*,l.name location_name,l.code location_code,r.code role_code')
+            ->join('locations l','l.id=ub.location_id')->join('roles r','r.id=ub.role_id')
+            ->orderBy('l.is_head_office','DESC')->orderBy('l.name')->get()->getResultArray() as $row) {
+            $assignments[(int)$row['user_id']][(int)$row['location_id']]=$row;
+        }
+
         return view('users/index',[
             'title'=>'Users / Roles',
+            'branches'=>BranchContext::allActive(),
+            'assignments'=>$assignments,
             'edit'=>(int)$this->request->getGet('edit') ? $this->users->find((int)$this->request->getGet('edit')) : null,
             'users'=>$this->users
                 ->select('users.*, roles.code AS role_code, roles.name AS role_name')
@@ -63,9 +73,10 @@ class Users extends Controller
     {
         if($r=$this->guard()) return $r;
         $id=(int)$this->request->getPost('id');
+        $allBranches=$this->request->getPost('all_branches')?1:0;
         $data=[
-            'location_id'=>session()->get('location_id')?:null,
             'role_id'=>(int)$this->request->getPost('role_id'),
+            'all_branches'=>$allBranches,
             'full_name'=>trim((string)$this->request->getPost('full_name')),
             'username'=>trim((string)$this->request->getPost('username')),
             'email'=>trim((string)$this->request->getPost('email'))?:null,
@@ -74,20 +85,56 @@ class Users extends Controller
         $password=(string)$this->request->getPost('password');
         if($data['full_name']===''||$data['username']===''||$data['role_id']<=0) return redirect()->back()->withInput()->with('error','Name, username and role are required.');
 
+        // Branch assignments: branch id => role id. Owners/admins with All branches need none.
+        $validBranches=array_column(BranchContext::allActive(),'id');
+        $validRoles=array_map('intval',array_column($this->roles->findAll(),'id'));
+        $postedBranches=(array)$this->request->getPost('branches');
+        $postedRoles=(array)$this->request->getPost('branch_role');
+        $default=(int)$this->request->getPost('default_branch');
+        $rows=[];
+        foreach($postedBranches as $locationId){
+            $locationId=(int)$locationId;
+            if(!in_array($locationId,array_map('intval',$validBranches),true)) continue;
+            $roleId=(int)($postedRoles[$locationId] ?? 0);
+            if(!in_array($roleId,$validRoles,true)) $roleId=$data['role_id'];
+            $rows[$locationId]=['location_id'=>$locationId,'role_id'=>$roleId,'is_default'=>0];
+        }
+        if(!$allBranches && !$rows) return redirect()->back()->withInput()->with('error','Assign at least one branch, or tick All branches.');
+        if($rows){
+            if(!isset($rows[$default])) $default=(int)array_key_first($rows);
+            $rows[$default]['is_default']=1;
+        }
+        if($id && $id===(int)session()->get('user_id') && !$allBranches && !isset($rows[BranchContext::currentId()])){
+            return redirect()->back()->withInput()->with('error','You cannot remove your own access to the branch you are working in.');
+        }
+
+        $db=Database::connect();
+        $db->transBegin();
         try {
             if($id){
                 if($password!=='') $data['password_hash']=password_hash($password,PASSWORD_DEFAULT);
                 $this->users->update($id,$data);
             } else {
-                if($password==='') return redirect()->back()->withInput()->with('error','Password is required for a new user.');
+                if($password==='') { $db->transRollback(); return redirect()->back()->withInput()->with('error','Password is required for a new user.'); }
                 $data['password_hash']=password_hash($password,PASSWORD_DEFAULT);
+                $data['location_id']=$default ?: (BranchContext::currentId() ?: null);
                 $this->users->insert($data);
+                $id=(int)$this->users->getInsertID();
             }
+            $db->table('user_branches')->where('user_id',$id)->delete();
+            foreach($rows as $row){
+                $db->table('user_branches')->insert($row+['user_id'=>$id]);
+            }
+            if(!$db->transStatus()) throw new \RuntimeException('save failed');
+            $db->transCommit();
         } catch (\Throwable $e) {
+            $db->transRollback();
             return redirect()->back()->withInput()->with('error','User could not be saved. Username or email may already exist.');
         }
+        BranchContext::reset();
+        PermissionService::reset();
 
-        return redirect()->to('/users')->with('success',$id?'User updated.':'User created.');
+        return redirect()->to('/users')->with('success',(int)$this->request->getPost('id')?'User updated.':'User created.');
     }
 
     public function rolePermissions()

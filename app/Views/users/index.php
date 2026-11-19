@@ -22,7 +22,7 @@
     <div class="card-body table-responsive">
         <table class="table table-hover align-middle mb-0">
             <thead>
-                <tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Status</th><th class="text-end">Action</th></tr>
+                <tr><th>Name</th><th>Username</th><th>Email</th><th>Role</th><th>Branches</th><th>Status</th><th class="text-end">Action</th></tr>
             </thead>
             <tbody>
             <?php foreach($users as $u): ?>
@@ -31,6 +31,13 @@
                     <td><?= esc($u['username']) ?></td>
                     <td><?= esc($u['email'] ?? '') ?></td>
                     <td><span class="badge text-bg-light border"><?= esc($u['role_code']) ?></span><div class="small text-muted"><?= esc($u['role_name']) ?></div></td>
+                    <td>
+                        <?php if ((int) ($u['all_branches'] ?? 0) === 1): ?>
+                            <span class="badge text-bg-primary">All branches</span>
+                        <?php else: foreach (($assignments[(int) $u['id']] ?? []) as $a): ?>
+                            <span class="badge text-bg-light border me-1 mb-1" title="<?= esc($a['location_name']) ?>"><?= esc($a['location_code']) ?> · <?= esc($a['role_code']) ?><?= (int) $a['is_default'] ? ' ★' : '' ?></span>
+                        <?php endforeach; if (empty($assignments[(int) $u['id']])): ?><span class="badge text-bg-danger">None</span><?php endif; endif; ?>
+                    </td>
                     <td><?= $u['is_active'] ? '<span class="badge text-bg-success">Active</span>' : '<span class="badge text-bg-secondary">Inactive</span>' ?></td>
                     <td class="text-end"><a class="btn btn-sm btn-outline-secondary" href="<?= site_url('users?edit='.$u['id']) ?>"><i class="bi bi-pencil me-1"></i>Edit</a></td>
                 </tr>
@@ -119,10 +126,39 @@
                     <div class="col-md-6"><label class="form-label">Username</label><input name="username" class="form-control" value="<?= esc($edit['username']??'') ?>" required></div>
                     <div class="col-md-6"><label class="form-label">Email</label><input name="email" type="email" class="form-control" value="<?= esc($edit['email']??'') ?>"></div>
                     <div class="col-md-6">
-                        <label class="form-label">Role</label>
-                        <select name="role_id" class="form-select" required>
+                        <label class="form-label">Main role</label>
+                        <select name="role_id" class="form-select" id="userMainRole" required>
                             <?php foreach($roles as $r): ?><option value="<?= $r['id'] ?>" <?= isset($edit)&&$edit['role_id']==$r['id']?'selected':'' ?>><?= esc($r['code'].' — '.$r['name']) ?></option><?php endforeach; ?>
                         </select>
+                        <div class="form-text">Used at every branch when All branches is ticked, and as the starting role for new branch rows.</div>
+                    </div>
+                    <?php
+                    $editAssign = $edit ? ($assignments[(int) $edit['id']] ?? []) : [];
+                    $editAll = $edit ? (int) ($edit['all_branches'] ?? 0) === 1 : false;
+                    ?>
+                    <div class="col-12">
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" name="all_branches" value="1" id="userAllBranches" <?= $editAll ? 'checked' : '' ?>>
+                            <label class="form-check-label" for="userAllBranches"><strong>All branches</strong> (owner / admin) — enters every active branch, including new ones, with the main role</label>
+                        </div>
+                        <div id="userBranchRows" class="border rounded">
+                            <table class="table table-sm align-middle mb-0">
+                                <thead><tr><th style="width:40px"></th><th>Branch</th><th style="width:40%">Role at this branch</th><th class="text-center" style="width:90px">Default</th></tr></thead>
+                                <tbody>
+                                <?php foreach ($branches as $b): $bid = (int) $b['id']; $a = $editAssign[$bid] ?? null; ?>
+                                    <tr>
+                                        <td><input class="form-check-input branch-include" type="checkbox" name="branches[]" value="<?= $bid ?>" id="ub<?= $bid ?>" <?= $a ? 'checked' : '' ?>></td>
+                                        <td><label for="ub<?= $bid ?>" class="mb-0"><?= esc($b['name']) ?> <span class="text-muted small"><?= esc($b['code']) ?></span><?php if ((int) $b['is_head_office'] === 1): ?> <span class="badge text-bg-warning">HO</span><?php endif; ?></label></td>
+                                        <td><select name="branch_role[<?= $bid ?>]" class="form-select form-select-sm branch-role">
+                                            <?php foreach ($roles as $r): ?><option value="<?= $r['id'] ?>" <?= ($a ? (int) $a['role_id'] : (int) ($edit['role_id'] ?? 0)) === (int) $r['id'] ? 'selected' : '' ?>><?= esc($r['code']) ?></option><?php endforeach; ?>
+                                        </select></td>
+                                        <td class="text-center"><input class="form-check-input" type="radio" name="default_branch" value="<?= $bid ?>" <?= $a && (int) $a['is_default'] ? 'checked' : '' ?>></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="form-text">A user with more than one branch picks a branch card after signing in, and can switch from the top bar.</div>
                     </div>
                     <div class="col-12">
                         <label class="form-label">Password</label>
@@ -146,6 +182,10 @@
 
 <script>
 document.addEventListener('DOMContentLoaded',()=>{
+    const all=document.getElementById('userAllBranches');
+    const rows=document.getElementById('userBranchRows');
+    const syncAll=()=>{ if(rows) rows.style.opacity=all&&all.checked?'.5':'1'; };
+    all?.addEventListener('change',syncAll); syncAll();
     document.querySelectorAll('.role-permission-card').forEach(card=>{
         const boxes=[...card.querySelectorAll('.permission-checkbox')];
         const count=card.querySelector('.permission-count');

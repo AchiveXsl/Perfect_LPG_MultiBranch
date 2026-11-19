@@ -12,7 +12,7 @@ class UserModel extends Model
     protected $useTimestamps=true;
     protected $createdField='created_at';
     protected $updatedField='updated_at';
-    protected $allowedFields=['location_id','role_id','full_name','username','email','password_hash','is_active','last_login_at'];
+    protected $allowedFields=['location_id','role_id','all_branches','full_name','username','email','password_hash','is_active','last_login_at'];
 
     public function findByLogin(string $login): ?array
     {
