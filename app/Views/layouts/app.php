@@ -136,6 +136,7 @@ $groups=[
         'items'=>[
             ['permission'=>'REPORT_VIEW','url'=>'reports','label'=>'Reports','icon'=>'bi-bar-chart'],
             ['permission'=>'REPORT_VIEW','url'=>'reports/inventory-detail','label'=>'Inventory Detail Report','icon'=>'bi-clipboard-data'],
+            ['permission'=>'REPORT_VIEW','url'=>'reports/customer-balances','label'=>'Customer Balances by Branch','icon'=>'bi-people-fill'],
             ['permission'=>'AUDIT_VIEW','url'=>'audit','label'=>'Audit Log','icon'=>'bi-shield-check'],
         ],
     ],

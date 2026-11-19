@@ -224,3 +224,14 @@ Do not expose the production application/database. Use a dedicated test database
 - Posting a Gas Sale, Cylinder Sale or Security Deposit calls `CostService::costSale()` inside the posting transaction: it consumes layers and stores `sale_items.cost_gas / cost_cylinder / cost_amount / cost_method` plus `cost_layer_usage`. Changing the method never touches posted sales. Void calls `reverseSale()` (layers restored), purchase void calls `voidPurchaseLayers()`.
 - A filled-cylinder purchase is costed all as gas, an empty-cylinder purchase as a cylinder. Security Deposit has no cylinder cost. Cylinder Return is not costed.
 - Dashboard "Sales & Profit" card = gross profit (sales minus cost). Click: customers (`dashboard/profit/customers`) -> that customer's sales (`profit/sales/{id}`, 0 = walk-in) -> one sale with price, cost and cost lots (`profit/sale/{id}`). Sales posted before migration 042 have no stored cost and are estimated with the old all-purchases average, shown as "est.".
+
+---
+
+## November 2026 — Multi-Branch (this repository)
+
+This repository started from AchiveXsl/Faizi_Traders and adds multi-branch support.
+- Design: `ARCHITECTURE.md` → Multi-Branch. Migration: `044_20261119_multi_branch.sql`.
+- Test cases and resume point: `multibranch_testcase.md`.
+- Read the current branch through `App\Services\BranchContext`, not `session('location_id')`, in new code.
+- New reports take a branch scope (`BranchContext::reportScope`) and filter with `whereIn('location_id', ...)`.
+- Purchases and supplier payments belong to the Head Office; stock lands at each purchase line's `receive_location_id`.

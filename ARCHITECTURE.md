@@ -180,3 +180,35 @@ Each filled physical cylinder is represented by a `cylinder_units` record with a
 ## Wastage Behavior
 
 Partial wastage deducts only the recorded gas loss from the physical cylinder's `gas_weight_kg`; the derived gas stock therefore decreases automatically while the cylinder remains filled with its remaining gas. If the recorded wastage equals all remaining gas, the physical cylinder is moved to empty stock. Wastage is limited by the configured shop/type percentage or fixed-KG allowance and is recorded with physical unit, user, reason and timestamp.
+
+## Multi-Branch
+
+Migration 044. One database serves every branch; each transaction row carries its branch in `location_id`.
+
+### Branch context
+- `App\Services\BranchContext` is the single source of the current branch (`session.location_id`) and of which branches a user may enter.
+- A user enters a branch through a `user_branches` row (branch + role at that branch) or through `users.all_branches = 1` (owners/admins: every active branch, including new ones, with `users.role_id`).
+- Permissions follow the role held at the current branch (`PermissionService`).
+- Sign-in: one branch → straight to the dashboard; several → branch cards (`/branches/select`). The top bar switches branch (`/branches/enter`).
+- `AuthFilter` sends a session without a branch to the picker and drops a branch the user lost access to.
+- Branch guard: the layout adds the page's branch to every POST form (`_branch_id`) and AJAX write (`X-LPG-Branch`, `public/js/lpg-branch-guard.js`). `AuthFilter` rejects a write whose branch differs from the session branch, so a tab left open on another branch cannot save into the wrong branch.
+
+### Head Office
+- Exactly one branch has `locations.is_head_office = 1`. Existing data belongs to it.
+- Purchasing is central: Purchases and Supplier Payments open only at the Head Office. The supplier payable is one account (`PurchaseService::supplierBalance` ignores branch).
+- Each purchase line has `receive_location_id`: that branch's stock receives the cylinders and its cost layers hold their cost. A refill line uses the receiving branch's empties.
+
+### Customers
+- `branch_scope`: `shared` (every branch) or `branch` (only `home_location_id`). `CustomerModel::visibleAt()` / `assertUsableAt()` enforce it in lists and on posting.
+- The opening balance belongs to the home branch (`CustomerModel::openingAt`). Balances are per branch; a combined balance is the sum.
+- `credit_scope`: `branch` checks the credit limit against this branch's OS; `combined` adds the OS at other branches (`SalesService::customerCombinedGasBalance`).
+- Old Issued Cylinders add to the opening balance, so they are recorded at the customer's home branch only.
+
+### Stock transfers
+- `StockTransferService`: dispatch → `in_transit` (OUT movements and cost out at the sender) → receive per cylinder (IN movements and cost in at the receiver; gas found may be lower than sent) or missing (back to the sender) → or cancel by the sender before receipt.
+- In-transit cylinders are in no branch's stock; the Inventory Detail Report shows them separately.
+
+### Reports
+- `BranchContext::reportScope()` turns `?branches=current|all|[ids]` into branch ids; anything beyond the current branch needs `REPORT_ALL_BRANCHES`.
+- Reports, Inventory Detail, Custody, Customer Ledger and Customer Balances by Branch accept the scope and show a per-branch breakdown with totals.
+- New reports should filter with `whereIn('location_id', $scope['ids'])`, not the session branch, so they work for one branch and combined.
