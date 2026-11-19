@@ -200,6 +200,25 @@ class CostService
         return $parts;
     }
 
+    /**
+     * Stock leaving a branch on a transfer: takes qty out of the branch's layers (with the branch's cost method)
+     * and returns the weighted unit cost, which the receiving branch then books as a new layer.
+     */
+    public function transferOut(int $locationId, string $kind, ?int $typeId, float $qty): float
+    {
+        if ($qty <= 0.00001) return 0.0;
+        $parts = $this->consume($locationId, $kind, $typeId, $qty, $this->method($locationId));
+        $value = array_sum(array_map(static fn($p) => (float) $p['qty'] * (float) $p['unit_cost'], $parts));
+        return $value / $qty;
+    }
+
+    /** Stock arriving at a branch on a transfer (or coming back to the sender): a new layer at the carried cost. */
+    public function transferIn(int $locationId, string $kind, ?int $typeId, string $sourceType, int $transferId, int $itemId, float $qty, float $unitCost): void
+    {
+        if ($qty <= 0.00001) return;
+        $this->insertLayer($locationId, $kind, $typeId, $sourceType, $transferId, $itemId, date('Y-m-d H:i:s'), $qty, $unitCost, true);
+    }
+
     protected function lastUnitCost(int $locationId, string $kind, ?int $typeId): float
     {
         $q = $this->db->table('cost_layers')->select('unit_cost')->where(['location_id' => $locationId, 'kind' => $kind, 'status' => 'active']);
