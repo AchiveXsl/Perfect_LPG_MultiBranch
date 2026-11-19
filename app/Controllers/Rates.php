@@ -56,7 +56,7 @@ class Rates extends Controller
         }
 
         // Customer special rates: the selected customer's grid, with what they would pay without special rates.
-        $customers=(new CustomerModel())->where('is_active',1)->orderBy('name')->findAll();
+        $customers=(new CustomerModel())->where('is_active',1)->visibleAt()->orderBy('name')->findAll();
         $customerId=(int)$this->request->getGet('customer');
         $customer=null;$customerGrid=null;$customerHistory=[];$customerList='retail';
         foreach($customers as $c) if((int)$c['id']===$customerId) $customer=$c;
@@ -120,7 +120,7 @@ class Rates extends Controller
     public function saveCustomer()
     {
         if($r=$this->guard()) return $r;
-        $customer=(new CustomerModel())->where('is_active',1)->find((int)$this->request->getPost('customer_id'));
+        $customer=(new CustomerModel())->where('is_active',1)->visibleAt()->find((int)$this->request->getPost('customer_id'));
         if(!$customer) return redirect()->to('/rates#rates-customer')->with('error','Customer is invalid or inactive.');
         $id=(int)$customer['id'];
         return $this->saveGrid($this->customerRates,$id,['customer_id'=>$id],redirect()->to('/rates?customer='.$id.'#rates-customer'),'customer_rate');

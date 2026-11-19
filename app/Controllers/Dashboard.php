@@ -218,7 +218,7 @@ class Dashboard extends Controller
             $id=(int)$c['id'];
             $balance=max(0,(float)($bulkBalances[$id]??0));
             if($balance<=0.005)continue;
-            $receivables[]=['id'=>$id,'code'=>$c['code'],'name'=>$c['name'],'phone'=>$c['phone'],'opening_balance'=>(float)$c['opening_balance'],'credit_sales'=>(float)($creditBy[$id]??0),'receipts'=>(float)($paidBy[$id]??0),'balance'=>$balance];
+            $receivables[]=['id'=>$id,'code'=>$c['code'],'name'=>$c['name'],'phone'=>$c['phone'],'opening_balance'=>\App\Models\CustomerModel::openingAt($c,(int)$locationId),'credit_sales'=>(float)($creditBy[$id]??0),'receipts'=>(float)($paidBy[$id]??0),'balance'=>$balance];
         }
         usort($receivables,static fn($a,$b)=>$b['balance']<=>$a['balance']);
         $receivableTotal=array_sum(array_map(static fn($x)=>(float)$x['balance'],$receivables));

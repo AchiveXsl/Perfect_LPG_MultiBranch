@@ -3,6 +3,7 @@
 namespace App\Controllers;
 
 use App\Models\CustomerModel;
+use App\Services\BranchContext;
 use App\Services\PermissionService;
 use App\Services\ExcelInventoryService;
 use App\Services\AuditService;
@@ -43,7 +44,7 @@ class Customers extends Controller
                 if($code!=='') { $key=strtoupper($code); if(isset($seenCodes[$key])) throw new \RuntimeException('Row '.$row['excel_row'].': duplicate customer code '.$code.' in the uploaded file.'); $seenCodes[$key]=true; if($this->model->where('code',$code)->first()) throw new \RuntimeException('Row '.$row['excel_row'].': customer code '.$code.' already exists. Existing customers are not overwritten.'); }
                 foreach([['credit_limit','Credit Limit'],['opening_balance','Opening Balance']] as [$field,$label]){ if($row[$field]===''||!is_numeric($row[$field])||(float)$row[$field]<0) throw new \RuntimeException('Row '.$row['excel_row'].': '.$label.' must be a number greater than or equal to 0.'); }
                 foreach([['allow_credit_sale','Allow Credit Sale'],['is_active','Active']] as [$field,$label]) if(!in_array($row[$field],['0','1'],true)) throw new \RuntimeException('Row '.$row['excel_row'].': '.$label.' must be 0 or 1.');
-                $data=['code'=>$code?:null,'name'=>$name,'phone'=>$row['phone']?:null,'city'=>$row['city']?:null,'address'=>$row['address']?:null,'vehicle_no'=>$row['vehicle_no']?:null,'credit_limit'=>(float)$row['credit_limit'],'allow_credit_sale'=>(int)$row['allow_credit_sale'],'opening_balance'=>(float)$row['opening_balance'],'is_active'=>(int)$row['is_active']];
+                $data=['code'=>$code?:null,'name'=>$name,'phone'=>$row['phone']?:null,'city'=>$row['city']?:null,'address'=>$row['address']?:null,'vehicle_no'=>$row['vehicle_no']?:null,'credit_limit'=>(float)$row['credit_limit'],'allow_credit_sale'=>(int)$row['allow_credit_sale'],'opening_balance'=>(float)$row['opening_balance'],'is_active'=>(int)$row['is_active'],'branch_scope'=>'shared','credit_scope'=>'branch','home_location_id'=>BranchContext::currentId()];
                 $id=$this->model->insert($data,true); if(!$id) throw new \RuntimeException('Row '.$row['excel_row'].': customer could not be created.');
                 AuditService::log('excel_import','customer',(int)$id,null,$data,$userId,(int)(session()->get('location_id')??0)); $created++;
             }
@@ -55,7 +56,16 @@ class Customers extends Controller
     public function index()
     {
         if($r=$this->guard()) return $r;
-        $editId=(int)$this->request->getGet('edit'); return view('customers/index',['title'=>'Customers / Parties','customers'=>$this->model->orderBy('name')->findAll(),'edit'=>$editId?$this->model->find($editId):null]);
+        $editId=(int)$this->request->getGet('edit');
+        $edit=$editId?$this->model->find($editId):null;
+        if($edit && !CustomerModel::isUsableAt($edit,BranchContext::currentId())) $edit=null;
+        return view('customers/index',[
+            'title'=>'Customers / Parties',
+            'customers'=>$this->model->visibleAt()->orderBy('name')->findAll(),
+            'edit'=>$edit,
+            'branches'=>BranchContext::allActive(),
+            'currentBranchId'=>BranchContext::currentId(),
+        ]);
     }
 
     public function ledger(int $id)
@@ -63,7 +73,7 @@ class Customers extends Controller
         if($r=$this->guard()) return $r;
         $locationId=(int)session()->get('location_id');
         $customer=$this->model->withLedgerTotals($id,$locationId);
-        if(!$customer) return $this->response->setStatusCode(404)->setBody('Customer not found');
+        if(!$customer || !CustomerModel::isUsableAt($customer,$locationId)) return $this->response->setStatusCode(404)->setBody('Customer not found');
         $db=$this->model->db;
         $sales=$db->table('sales')->select('transaction_at,sale_no,transaction_type,total_amount,credit_amount,return_gas_ledger_amount,security_deposit_amount,security_deposit_refund_amount,status')->where('customer_id',$id)->where('location_id',$locationId)->orderBy('transaction_at','DESC')->get()->getResultArray();
         $receipts=$db->query(
@@ -176,7 +186,7 @@ class Customers extends Controller
             $events[]=['at'=>$r['receipt_at'],'ref'=>$r['receipt_no'],'type'=>ucfirst((string)$r['payment_mode']).(!empty($r['reference_no'])?' '.$r['reference_no']:''),'amount'=>null,'paid'=>null,'added'=>null,'made'=>(float)$r['amount'],'status'=>$r['status'],'kind'=>'receipt','id'=>(int)$r['id'],'voidable'=>!$insideSale];
         }
         usort($events,static fn($x,$y)=>[$x['at'],$x['kind']==='sale'?0:1,$x['id']]<=>[$y['at'],$y['kind']==='sale'?0:1,$y['id']]);
-        $running=(float)$customer['opening_balance'];$seq=0;
+        $running=CustomerModel::openingAt($customer,$locationId);$seq=0;
         foreach($events as &$e){
             $e['seq']=++$seq;$e['cyl_before']=$cylRun;
             if($e['status']==='posted'){$running+=(float)($e['added']??0)-(float)($e['made']??0);$cylRun+=(int)($e['issued_n']??0)-(int)($e['returned_n']??0);}
@@ -217,9 +227,20 @@ class Customers extends Controller
             'allow_credit_sale'=>$this->request->getPost('allow_credit_sale') ? 1 : 0,
             'opening_balance'=>(float)$this->request->getPost('opening_balance'),
             'is_active'=>$this->request->getPost('is_active') ? 1 : 0,
+            'branch_scope'=>$this->request->getPost('branch_scope')==='branch' ? 'branch' : 'shared',
+            'credit_scope'=>$this->request->getPost('credit_scope')==='combined' ? 'combined' : 'branch',
+            'home_location_id'=>(int)$this->request->getPost('home_location_id') ?: BranchContext::currentId(),
         ];
         if($data['name']==='') return redirect()->back()->withInput()->with('error','Customer name is required.');
         if($data['credit_limit']<0||$data['opening_balance']<0) return redirect()->back()->withInput()->with('error','Credit limit and opening balance cannot be negative.');
+        if(!in_array($data['home_location_id'],array_map('intval',array_column(BranchContext::allActive(),'id')),true)) return redirect()->back()->withInput()->with('error','Select an active home branch.');
+        if($id){
+            $old=$this->model->find($id);
+            if(!$old || !CustomerModel::isUsableAt($old,BranchContext::currentId())) return redirect()->to('/customers')->with('error','Customer not found at this branch.');
+        }
+        if($data['branch_scope']==='branch' && $data['home_location_id']!==BranchContext::currentId() && !PermissionService::allows('BRANCH_MANAGE')){
+            return redirect()->back()->withInput()->with('error','Only a user who manages branches can make a customer belong to another branch.');
+        }
         try { if($id) $this->model->update($id,$data); else $this->model->insert($data); } catch (\Throwable $e) { return redirect()->back()->withInput()->with('error','Customer could not be saved. Check the code for duplicates.'); }
         return redirect()->to('/customers')->with('success',$id?'Customer updated.':'Customer created.');
     }

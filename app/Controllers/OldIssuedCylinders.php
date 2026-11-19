@@ -25,7 +25,8 @@ class OldIssuedCylinders extends Controller
         if($r=$this->guard()) return $r;
         return view('inventory/old_issued',[
             'title'=>'Old Issued Cylinders',
-            'customers'=>(new CustomerModel())->activeDirectory(),
+            // Only customers whose home branch is this branch: old issued OS goes into their opening balance.
+            'customers'=>array_values(array_filter((new CustomerModel())->activeDirectory(),fn($c)=>CustomerModel::homeOf($c)===$this->locationId())),
             'types'=>(new CylinderTypeModel())->activeOrdered(),
             'entries'=>(new OldIssuedCylinderService())->recent($this->locationId()),
         ]);

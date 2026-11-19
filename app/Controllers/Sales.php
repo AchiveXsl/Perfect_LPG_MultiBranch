@@ -57,7 +57,7 @@ class Sales extends Controller
         $shopSettings=(new ShopSettingsModel())->forLocation($locationId);
         $types=(new CylinderTypeModel())->activeOrdered();
         $customerId=(int)$this->request->getGet('customer_id');
-        $customer=$customerId>0?(new CustomerModel())->where('is_active',1)->find($customerId):null;
+        $customer=$customerId>0?(new CustomerModel())->where('is_active',1)->visibleAt($locationId)->find($customerId):null;
         return $this->response->setJSON(['at'=>date('Y-m-d H:i:s',$ts),'customer_id'=>$customer?(int)$customer['id']:null,'books'=>$this->priceBooks($locationId,$types,$shopSettings,date('Y-m-d H:i:s',$ts),$customer)]);
     }
 
@@ -107,7 +107,7 @@ class Sales extends Controller
     {
         if($r=$this->guard()) return $r;
         $customer=(new CustomerModel())->find($id);
-        if(!$customer || (int)($customer['is_active']??0)!==1) {
+        if(!$customer || (int)($customer['is_active']??0)!==1 || !CustomerModel::isUsableAt($customer,(int)session()->get('location_id'))) {
             return $this->response->setStatusCode(404)->setJSON(['error'=>'Customer not found.']);
         }
         try {

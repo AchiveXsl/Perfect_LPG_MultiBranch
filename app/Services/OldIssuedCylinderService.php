@@ -72,8 +72,10 @@ class OldIssuedCylinderService
             $cylinderCount = 0;
             $outstandingTotal = 0.0;
             foreach ($clean as $i => $row) {
-                $customer = $this->db->query('SELECT id,is_active FROM customers WHERE id=? FOR UPDATE', [$row['customer_id']])->getRowArray();
+                $customer = $this->db->query('SELECT id,name,is_active,home_location_id FROM customers WHERE id=? FOR UPDATE', [$row['customer_id']])->getRowArray();
                 if (!$customer || !(int)$customer['is_active']) throw new RuntimeException('Row ' . ($i + 1) . ': Customer is unavailable.');
+                // The outstanding amount is added to the opening balance, which belongs to the customer's home branch.
+                if (\App\Models\CustomerModel::homeOf($customer) !== $locationId) throw new RuntimeException('Row ' . ($i + 1) . ': ' . $customer['name'] . ' has another home branch. Record old issued cylinders at the home branch.');
                 $type = $this->db->table('cylinder_types')->where(['id' => $row['cylinder_type_id'], 'is_active' => 1])->get()->getRowArray();
                 $capacity = (float)($type['capacity_kg'] ?? 0);
                 if (!$type || $capacity <= 0) throw new RuntimeException('Row ' . ($i + 1) . ': Cylinder type is unavailable.');

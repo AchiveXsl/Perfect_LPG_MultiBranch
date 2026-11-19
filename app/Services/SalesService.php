@@ -78,6 +78,7 @@ class SalesService
 
         $customer=$customerId?$this->customers->find($customerId):null;
         if($customerId && (!$customer || !(int)$customer['is_active'])) throw new RuntimeException('Customer is invalid or inactive.');
+        CustomerModel::assertUsableAt($customer,$locationId);
         if($headerType==='security_deposit' || $headerType==='cylinder_return'){
             if(!$customerId) throw new RuntimeException('A named customer is required for cylinder custody transactions.');
         }
@@ -1021,9 +1022,14 @@ class SalesService
                 // This also prevents a configured limit from being displayed as Unlimited
                 // while the server silently allows unlimited credit.
                 $creditLimit=(float)($customerForCredit['credit_limit']??0);
-                if($creditLimit>0 && $newOs>$creditLimit+0.01){
-                    $available=max(0,$creditLimit-max(0,$previousOs));
-                    throw new RuntimeException('Customer credit limit exceeded. Existing OS Rs. '.number_format($previousOs,2).'; available additional credit Rs. '.number_format($available,2).'.');
+                // credit_scope 'combined': what the customer owes at the other branches counts against the same limit.
+                $otherBranchesOs=($customerForCredit['credit_scope']??'branch')==='combined'
+                    ? $this->customerCombinedGasBalance($customerId)-$this->customerGasBalance($customerId)
+                    : 0.0;
+                if($creditLimit>0 && $newOs+$otherBranchesOs>$creditLimit+0.01){
+                    $available=max(0,$creditLimit-max(0,$previousOs+$otherBranchesOs));
+                    $scopeNote=$otherBranchesOs!=0.0 ? ' (all branches; other branches Rs. '.number_format($otherBranchesOs,2).')' : '';
+                    throw new RuntimeException('Customer credit limit exceeded. Existing OS Rs. '.number_format($previousOs+$otherBranchesOs,2).$scopeNote.'; available additional credit Rs. '.number_format($available,2).'.');
                 }
             }elseif($creditMode==='shop'){
                 $this->acquireCreditLimitLock($this->currentLocationId ?? 0);
@@ -1042,11 +1048,15 @@ class SalesService
 
     protected function shopOutstanding(int $locationId): float
     {
-        $sql="SELECT COALESCE(SUM(CASE WHEN (c.opening_balance+COALESCE(s.credit,0)+COALESCE(s.return_ledger,0)-COALESCE(r.paid,0))>0 THEN (c.opening_balance+COALESCE(s.credit,0)+COALESCE(s.return_ledger,0)-COALESCE(r.paid,0)) ELSE 0 END),0) AS shop_os
+        // The opening balance counts only at the customer's home branch (no home branch = Head Office).
+        $opening="(CASE WHEN COALESCE(c.home_location_id,?)=? THEN c.opening_balance ELSE 0 END)";
+        $sql="SELECT COALESCE(SUM(CASE WHEN ($opening+COALESCE(s.credit,0)+COALESCE(s.return_ledger,0)-COALESCE(r.paid,0))>0 THEN ($opening+COALESCE(s.credit,0)+COALESCE(s.return_ledger,0)-COALESCE(r.paid,0)) ELSE 0 END),0) AS shop_os
               FROM customers c
               LEFT JOIN (SELECT customer_id,SUM(credit_amount) credit,SUM(return_gas_ledger_amount) return_ledger FROM sales WHERE location_id=? AND status='posted' AND customer_id IS NOT NULL GROUP BY customer_id) s ON s.customer_id=c.id
               LEFT JOIN (SELECT customer_id,SUM(amount) paid FROM customer_receipts WHERE location_id=? AND status='posted' GROUP BY customer_id) r ON r.customer_id=c.id";
-        $row=$this->db->query($sql,[$locationId,$locationId])->getRowArray();
+        $ho=BranchContext::headOfficeId();
+        // $opening appears twice (2 placeholders each), then the two sub-queries.
+        $row=$this->db->query($sql,[$ho,$locationId,$ho,$locationId,$locationId,$locationId])->getRowArray();
         return (float)($row['shop_os']??0);
     }
 
@@ -1113,6 +1123,18 @@ class SalesService
             ->where('customer_id',$customerId)->where('status','posted')->where('location_id',$this->currentLocationId)->get()->getRowArray();
         $r=$this->db->table('customer_receipts')->selectSum('amount','paid')
             ->where('customer_id',$customerId)->where('status','posted')->where('location_id',$this->currentLocationId)->get()->getRowArray();
+        $c=$this->customers->find($customerId);
+        $opening=$c ? CustomerModel::openingAt($c,(int)$this->currentLocationId) : 0.0;
+        return $opening+(float)($s['credit']??0)+(float)($s['return_ledger']??0)-(float)($r['paid']??0);
+    }
+
+    /** Gas OS of a customer across every branch: opening balance + all credit - all receipts. */
+    public function customerCombinedGasBalance(int $customerId): float
+    {
+        $s=$this->db->table('sales')->selectSum('credit_amount','credit')->selectSum('return_gas_ledger_amount','return_ledger')
+            ->where('customer_id',$customerId)->where('status','posted')->get()->getRowArray();
+        $r=$this->db->table('customer_receipts')->selectSum('amount','paid')
+            ->where('customer_id',$customerId)->where('status','posted')->get()->getRowArray();
         $c=$this->customers->find($customerId);
         return (float)($c['opening_balance']??0)+(float)($s['credit']??0)+(float)($s['return_ledger']??0)-(float)($r['paid']??0);
     }
@@ -1314,7 +1336,7 @@ class SalesService
         $balances=[];
         foreach($customers as $c){
             $id=(int)$c['id'];
-            $balances[$id]=(float)($c['opening_balance']??0)+($sales[$id]??0.0)-($paid[$id]??0.0)+($deposits[$id]??0.0);
+            $balances[$id]=CustomerModel::openingAt($c,$locationId)+($sales[$id]??0.0)-($paid[$id]??0.0)+($deposits[$id]??0.0);
         }
         return $balances;
     }
