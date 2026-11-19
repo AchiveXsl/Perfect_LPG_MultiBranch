@@ -77,7 +77,7 @@ The repository's `env` file documents each configuration block. Important values
 - After installation, verify that the application and administrator login work, then **immediately set `FRESH_DATABASE_SETUP = false`**.
 - Do not enable this flag as a routine way to refresh transactional data. Use the separately permission-controlled Transactional Data Refresh feature for that purpose.
 
-See [First-Time Database Installation](docs/first-install-setup.md) for the full procedure and [Railway Deployment](docs/railway-deployment.md) for Railway-specific setup.
+See [First-Time Database Installation](docs/first-install-setup.md) for the full procedure and [Railway Deployment](docs/railway-deployment.md) for Railway-specific setup. For cPanel, Hostinger and other web hosting see [cPanel / Hostinger Deployment](docs/cpanel-deployment.md).
 
 ## Important Environment Rule
 
@@ -357,7 +357,7 @@ LPG/
 | Database queries and persistence | `app/Models/`, then `app/Config/Database.php` and schema/migrations |
 | Screen markup and frontend behavior | `app/Views/` and the relevant public assets |
 | Baseline schema and data changes | `database/schema.sql` and `database/migrations/` |
-| Local setup and Railway deployment | `docs/first-install-setup.md`, `docs/railway-deployment.md`, `env`, and deployment environment variables |
+| Local setup and Railway deployment | `docs/first-install-setup.md`, `docs/railway-deployment.md`, `docs/cpanel-deployment.md`, `env`, and deployment environment variables |
 | Automated checks | `.github/workflows/ci.yml`, `TESTING.md`, `SQA.md`, and `tests/` |
 | Agent-specific conventions and project history | `claude.md` and this README |
 
