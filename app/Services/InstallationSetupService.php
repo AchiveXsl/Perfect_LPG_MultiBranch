@@ -52,7 +52,8 @@ class InstallationSetupService
             $adminExists = false;
             $complete = false;
             if ($exists) {
-                $stmt = $db->prepare('SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ?');
+                // The app's own bookkeeping tables (created when the login page checks migrations) do not make a database "in use".
+                $stmt = $db->prepare("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME NOT IN ('lpg_migration_history','lpg_installation_state')");
                 $stmt->bind_param('s', $s['name']);
                 $stmt->execute();
                 $tables = (int) $stmt->get_result()->fetch_row()[0];
