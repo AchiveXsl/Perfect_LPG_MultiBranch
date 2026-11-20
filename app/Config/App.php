@@ -16,7 +16,32 @@ class App extends BaseConfig
      *
      * E.g., http://example.com/
      */
-    public string $baseURL = 'http://localhost:8080/';
+    public string $baseURL = '';
+
+    /**
+     * The base URL comes from configuration, never a hard-coded host:
+     * 1. app.baseURL in .env (applied by BaseConfig),
+     * 2. the LPG_BASE_URL / APP_BASE_URL environment variable (hosting panels such as Railway),
+     * 3. the address the request arrived on (scheme + host + the folder of index.php),
+     * 4. http://localhost/ for command-line runs without any of the above.
+     */
+    public function __construct()
+    {
+        parent::__construct();
+
+        $url = trim($this->baseURL);
+        if ($url === '') {
+            $url = trim((string) (getenv('LPG_BASE_URL') ?: getenv('APP_BASE_URL') ?: ''));
+        }
+        if ($url === '' && !empty($_SERVER['HTTP_HOST'])) {
+            $https = (!empty($_SERVER['HTTPS']) && strtolower((string) $_SERVER['HTTPS']) !== 'off')
+                || strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https';
+            $host = preg_replace('/[^A-Za-z0-9.\-:\[\]]/', '', (string) $_SERVER['HTTP_HOST']);
+            $dir = str_replace('\\', '/', dirname((string) ($_SERVER['SCRIPT_NAME'] ?? '/')));
+            $url = ($https ? 'https' : 'http') . '://' . $host . rtrim($dir, '/') . '/';
+        }
+        $this->baseURL = rtrim($url !== '' ? $url : 'http://localhost/', '/') . '/';
+    }
 
     /**
      * Allowed Hostnames in the Site URL other than the hostname in the baseURL.
