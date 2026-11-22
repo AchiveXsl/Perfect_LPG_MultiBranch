@@ -257,3 +257,27 @@ html[lang="ur"] .wl-card .gp-btn{font-size:20px}
 .lang-switch a:hover{color:var(--lpg-text,#172033)}
 .lang-switch a[aria-current="true"]{background:var(--lpg-dark,#06382F);color:#fff}
 .lang-switch a[lang="ur"]{font-family:'Noto Naskh Arabic','DM Sans',sans-serif;font-size:1.05em}
+
+/* ---------------------------------------------------------------------------
+   Responsive shell fixes (phone / tablet / laptop)
+   - Sidebar fits the visible screen (dvh), so Logout is never pushed below the
+     mobile browser's address bar.
+   - Top bar never overflows on small screens.
+   --------------------------------------------------------------------------- */
+.sidebar{height:100vh;height:100dvh}
+.sidebar > .p-3{padding-bottom:max(1rem,env(safe-area-inset-bottom))!important}
+.topbar{gap:.5rem;flex-wrap:nowrap;min-width:0}
+.topbar h5{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topbar > .d-flex{min-width:0;flex-shrink:1;justify-content:flex-end}
+@media (max-width:991.98px){
+  .topbar{padding:.6rem .9rem}
+  .topbar .topbar-user{display:none}
+  #branchSwitch .text-truncate{max-width:120px!important}
+}
+@media (max-width:575.98px){
+  .topbar h5{font-size:.95rem}
+  .topbar .topbar-role{display:none}
+  #branchSwitch .text-truncate{max-width:90px!important}
+  .content-wrap{padding:14px 12px}
+  .table-responsive{-webkit-overflow-scrolling:touch}
+}
