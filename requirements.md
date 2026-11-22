@@ -39,6 +39,7 @@ The branch administrator sets the default POS transaction type in **Shop Setting
 
 ## Master Data Seed (fresh install)
 - A fresh install (`database/schema.sql`) seeds only two cylinder types: **C11_8 — 11.8 kg** and **C45 — 45 kg**. Other sizes are added by the shop under cylinder type setup.
+- Cylinder type codes are unique; capacity is not. Several types may share one capacity (e.g. two 11.8 kg brands) and are kept apart by code and name.
 - The Opening Inventory Excel template's example rows use the same two types.
 
 ## Shop / Branch Configuration
@@ -237,6 +238,16 @@ Every price list can hold three kinds of rate:
 - POS shows a **Special rates** badge next to the price list, and reloads prices when the customer changes.
 - Walk-in sales never use special rates.
 - **Customer special rates** in Shop Settings → Pricing turns the feature on or off. When it is off, special rates are kept but ignored at POS, and the Customer Rates tab shows a warning.
+
+## Purchase Rate Correction
+- A posted purchase line rate can be corrected later with a reason; quantity and stock never change and the supplier payable moves by the difference.
+- If any of that stock is already sold, the user is warned that profit and loss may change and must confirm; only then the new rate is applied and the cost of all linked sales is restated.
+
+## Loans Taken (Lenders)
+- A branch can record money it borrows from a lender who is neither a customer nor a supplier, and its repayments. No interest or profit share.
+- Each branch manages and repays its own loans. A repayment cannot exceed the balance owed.
+- Loans are liabilities, never sales, profit or expense. Cash loans and repayments move the counter cash.
+- Entries are voided with a reason (cash reversed), never deleted. Each lender has a ledger with a running balance.
 
 ## Completion Rule
 A requirement is marked Done only after implementation, validation, transaction testing, UI testing, relevant reporting and tracker update.

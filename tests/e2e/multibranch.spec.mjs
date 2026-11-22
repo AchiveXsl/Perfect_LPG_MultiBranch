@@ -323,3 +323,296 @@ test('MB-07 removing branch access sends the user back to the picker', async ({ 
   await expect(user.locator('.topbar')).toContainText(hoName);
   await expect(user.locator('.topbar')).not.toContainText(B2.name);
 });
+
+async function setPurchaseMode(page, mode) {
+  await page.goto('shop-settings', { waitUntil: 'load' });
+  await page.locator('button[data-bs-target="#security"]').click();
+  await page.locator(mode === 'split' ? '#pmSplit' : '#pmCentral').check();
+  await page.locator('button.btn-primary', { hasText: 'Save Shop Settings' }).click();
+  await page.waitForLoadState('load');
+}
+
+test('MB-24 split purchasing: a branch buys and pays its own stock, central blocked while it owes', async ({ page }) => {
+  test.setTimeout(240_000);
+  await login(page, 'admin', 'admin123');
+  await page.locator('[data-testid="branch-card-MAIN"]').click();
+  await page.waitForLoadState('load');
+  await setPurchaseMode(page, 'split');
+  expect(await alertText(page)).not.toContain('Cannot');
+
+  await switchBranch(page, B2.name);
+  await expect(page.locator('#sidebar')).toContainText('Supplier Payments');
+  await page.goto('purchases', { waitUntil: 'load' });
+  await expect(page).toHaveURL(/purchases/);
+  // Receive at offers only this branch.
+  await page.locator('#supplier_id').selectOption({ label: 'MB Supplier' });
+  const row = page.locator('#lines tr.line').first();
+  await expect(row.locator('.dest option')).toHaveCount(1);
+  await expect(row.locator('.dest option')).toHaveText([B2.name]);
+  await row.locator('.type').selectOption('filled_cylinder');
+  await row.locator('.cyl').selectOption({ index: 1 });
+  await row.locator('.qty').fill('2');
+  await row.locator('.rate').fill('3000');
+  await page.locator('#postPurchase').click();
+  await page.waitForLoadState('load');
+  expect(await alertText(page)).toContain('posted');
+
+  // B2 owes only its own purchase (2 x 3000), not the Head Office balance.
+  await page.goto('supplier-payments', { waitUntil: 'load' });
+  await page.locator('#supplier_id').selectOption({ label: 'MB Supplier' });
+  await expect(page.locator('#outstanding')).toContainText('6,000.00');
+
+  // Back to central is refused while B2 owes.
+  await switchBranch(page, hoName);
+  await setPurchaseMode(page, 'central');
+  expect(await alertText(page)).toContain('Branch Two');
+
+  // B2 pays its balance, then central is accepted.
+  await switchBranch(page, B2.name);
+  await page.goto('supplier-payments', { waitUntil: 'load' });
+  await page.locator('#supplier_id').selectOption({ label: 'MB Supplier' });
+  await page.locator('#amount').fill('6000');
+  await page.locator('#payment_mode').selectOption('online');
+  await page.locator('#payButton').click();
+  await page.waitForLoadState('load');
+  expect(await alertText(page)).toContain('posted');
+
+  await switchBranch(page, hoName);
+  await setPurchaseMode(page, 'central');
+  expect(await alertText(page)).not.toContain('Cannot');
+  await switchBranch(page, B2.name);
+  await expect(page.locator('#sidebar')).not.toContainText('Supplier Payments');
+});
+
+
+test('MB-25 cylinder types may share a capacity, codes stay unique', async ({ page }) => {
+  await login(page, 'admin', 'admin123');
+  await page.locator('[data-testid="branch-card-MAIN"]').click();
+  await page.waitForLoadState('load');
+  const addType = async (code, name, cap) => {
+    await page.goto('cylinder-types', { waitUntil: 'load' });
+    await page.locator('[data-bs-target="#form"]').first().click();
+    const f = page.locator('#form');
+    await f.locator('input[name="code"]').fill(code);
+    await f.locator('input[name="name"]').fill(name);
+    await f.locator('input[name="capacity_kg"]').fill(cap);
+    await f.locator('input[name="empty_cylinder_price"]').fill('0');
+    await f.locator('input[name="sort_order"]').fill('9');
+    await f.locator('button.btn-primary').click();
+    await page.waitForLoadState('load');
+    return alertText(page);
+  };
+  // 11.8 kg already exists as C11_8: a second 11.8 kg type with a new code is accepted.
+  expect(await addType('C11_8B', '11.8 kg Brand B', '11.8')).toContain('Cylinder type created');
+  // The same code again is refused with a clear message.
+  expect(await addType('C11_8B', 'Duplicate', '15')).toContain('already used');
+});
+
+test('MB-26 split purchasing makes every customer branch-only, fields read-only', async ({ page }) => {
+  test.setTimeout(300_000);
+  await login(page, 'admin', 'admin123');
+  await page.locator('[data-testid="branch-card-MAIN"]').click();
+  await page.waitForLoadState('load');
+  // A shared customer created at the Head Office while central.
+  await page.goto('customers', { waitUntil: 'load' });
+  await page.locator('[data-bs-target="#form"]').first().click();
+  await page.locator('#form input[name="name"]').fill('MB Shared HO');
+  await page.locator('#customerBranchScope').selectOption('shared');
+  await page.locator('#form button.btn-primary').click();
+  await page.waitForLoadState('load');
+
+  await setPurchaseMode(page, 'split');
+  // Now the HO customer belongs to the HO only.
+  await switchBranch(page, B2.name);
+  await page.goto('customers', { waitUntil: 'load' });
+  await expect(page.locator('body')).not.toContainText('MB Shared HO');
+  // New customer at B2: branch fields are read-only and fixed to B2.
+  await page.locator('[data-bs-target="#form"]').first().click();
+  await expect(page.locator('#customerBranchScope')).toHaveCount(0);
+  await expect(page.locator('#customerHomeBranch')).toHaveValue(B2.name);
+  await expect(page.locator('#customerHomeBranch')).toBeDisabled();
+  await page.locator('#form input[name="name"]').fill('MB Split B2');
+  await page.locator('#form button.btn-primary').click();
+  await page.waitForLoadState('load');
+  await expect(page.locator('.content-wrap tr', { hasText: 'MB Split B2' })).toContainText('B2 only');
+  await switchBranch(page, hoName);
+  await page.goto('customers', { waitUntil: 'load' });
+  await expect(page.locator('body')).not.toContainText('MB Split B2');
+  await expect(page.locator('.content-wrap tr', { hasText: 'MB Shared HO' })).toContainText('only');
+
+  // Restore central (no branch owes a supplier here).
+  await setPurchaseMode(page, 'central');
+  expect(await alertText(page)).not.toContain('Cannot');
+});
+
+// ---------- Purchase rate edit, sale history cylinders, ledger / expense PDFs, loans ----------
+async function enterHo(page) {
+  await login(page, 'admin', 'admin123');
+  await page.locator('[data-testid="branch-card-MAIN"]').click();
+  await page.waitForLoadState('load');
+}
+async function openCash(page) {
+  await page.goto('cash', { waitUntil: 'load' });
+  const open = page.locator('form[action$="cash/open"] button');
+  if (await open.count()) { await open.first().click(); await page.waitForLoadState('load'); }
+}
+async function openLatestPurchase(page) {
+  await page.goto('purchases?tab=history', { waitUntil: 'load' });
+  const btn = page.locator('[data-bs-target^="#purchaseDetailModal"]').first();
+  const target = await btn.getAttribute('data-bs-target');
+  await btn.click();
+  const modal = page.locator(target);
+  await expect(modal).toBeVisible();
+  await modal.locator('summary', { hasText: 'Edit Rates' }).click();
+  return modal;
+}
+async function postWalkinGas(page, typeId, kg, rate) {
+  const html = await (await page.request.get('sales')).text();
+  const token = html.match(/name="csrf_test_name" value="([^"]+)"/)[1];
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  const res = await page.request.post('sales/save', {
+    headers: { 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json' },
+    form: {
+      csrf_test_name: token, discount_amount: '0', stock_override_confirmed: '0', transaction_type: 'gas_sale', customer_id: '',
+      transaction_at: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`,
+      rate_change_reason: 'MB test rate',
+      lines_json: JSON.stringify([{ cylinder_type_id: String(typeId), source_cylinder_unit_id: '', quantity: String(kg), cylinder_quantity: '0', gas_entry_mode: 'quantity', gas_rate: String(rate), entered_amount: '', customer_cylinder_unit_id: '' }]),
+      payments_json: JSON.stringify([{ payment_type: 'sale', payment_mode: 'cash', amount: String(kg * rate) }]),
+    },
+  });
+  return res.json();
+}
+
+test('MB-27 purchase rate edit: free while unsold, asks before restating sold stock', async ({ page }) => {
+  test.setTimeout(400_000);
+  await enterHo(page);
+  await openCash(page);
+  // Purchase 2 filled 11.8 kg at 3000 on credit.
+  await page.goto('purchases', { waitUntil: 'load' });
+  await page.locator('#supplier_id').selectOption({ label: 'MB Supplier' });
+  const row = page.locator('#lines tr.line').first();
+  await row.locator('.type').selectOption('filled_cylinder');
+  await row.locator('.cyl').selectOption({ index: 1 });
+  await row.locator('.qty').fill('2');
+  await row.locator('.rate').fill('3000');
+  await page.locator('#postPurchase').click();
+  await page.waitForLoadState('load');
+  expect(await alertText(page)).toContain('posted');
+
+  // Unsold: the rate changes without a question.
+  let modal = await openLatestPurchase(page);
+  const cells = modal.locator('.purchase-rate-form tbody tr').first().locator('td');
+  await expect(cells.nth(3)).toHaveText('None');
+  await modal.locator('.rate-input').first().fill('3100');
+  await modal.locator('.purchase-rate-form input[name="reason"]').fill('Final rate from supplier');
+  await modal.locator('.purchase-rate-form button[type="submit"]').click();
+  await page.waitForLoadState('load');
+  expect(await alertText(page)).toContain('Total changed by Rs. 200.00');
+
+  // Sell gas: part of this purchase's gas is now sold (cylinder type 1 = C11_8 on a fresh database).
+  const sale = await postWalkinGas(page, 1, 5, 300);
+  expect(sale.success, JSON.stringify(sale)).toBeTruthy();
+
+  modal = await openLatestPurchase(page);
+  const cells2 = modal.locator('.purchase-rate-form tbody tr').first().locator('td');
+  await expect(cells2.nth(3)).toContainText('KG');
+  await modal.locator('.rate-input').first().fill('3200');
+  await modal.locator('.purchase-rate-form input[name="reason"]').fill('Supplier revised again');
+  // Cancel the question: nothing is posted.
+  let asked = '';
+  page.once('dialog', d => { asked = d.message(); d.dismiss(); });
+  await modal.locator('.purchase-rate-form button[type="submit"]').click();
+  await expect.poll(() => asked).toContain('already sold');
+  await expect(cells2.nth(4)).toHaveText('3,100.00');
+  // Accept: rate applied and linked sales restated.
+  page.once('dialog', d => d.accept());
+  await modal.locator('.purchase-rate-form button[type="submit"]').click();
+  await page.waitForLoadState('load');
+  const msg = await alertText(page);
+  expect(msg).toContain('Total changed by Rs. 200.00');
+  expect(msg).toContain('restated');
+});
+
+test('MB-28 sale history shows cylinder types with counts in one column', async ({ page }) => {
+  await enterHo(page);
+  await page.goto('sales/history', { waitUntil: 'load' });
+  await expect(page.locator('thead')).toContainText('Cylinders');
+  await expect(page.locator('#saleHistoryBody tr.sale-history-row').first().locator('td.sh-cyl')).toHaveText('C11_8 (1)');
+});
+
+test('MB-29 customer ledger exports PDF from the customer page and from Reports', async ({ page }) => {
+  await enterHo(page);
+  await page.goto('customers', { waitUntil: 'load' });
+  const href = await page.locator('.content-wrap tr', { hasText: 'MB Shared HO' }).locator('a[href*="customers/ledger/"]').first().getAttribute('href');
+  const id = href.match(/ledger\/(\d+)/)[1];
+  await page.goto('customers/ledger/' + id, { waitUntil: 'load' });
+  await page.evaluate(() => { window.print = () => {}; });
+  let [popup] = await Promise.all([page.waitForEvent('popup'), page.locator('#ledgerPdfTop').click()]);
+  await popup.waitForLoadState();
+  expect(await popup.content()).toContain('Customer Ledger - MB Shared HO');
+  await popup.close();
+  await page.goto('reports/ledger/' + id, { waitUntil: 'load' });
+  await page.evaluate(() => { window.print = () => {}; });
+  [popup] = await Promise.all([page.waitForEvent('popup'), page.locator('#ledgerPdf').click()]);
+  await popup.waitForLoadState();
+  const html = await popup.content();
+  expect(html).toContain('MB Shared HO');
+  expect(html).toContain('Opening Balance');
+});
+
+test('MB-30 loans: lender, loan received, repayment limit, void', async ({ page }) => {
+  test.setTimeout(300_000);
+  page.on('dialog', d => d.accept('Entered by mistake'));
+  await enterHo(page);
+  await openCash(page);
+  await page.goto('loans', { waitUntil: 'load' });
+  await page.locator('[data-bs-target="#lenderForm"]').click();
+  await page.locator('#lenderForm input[name="name"]').fill('MB Lender');
+  await page.locator('#lenderForm input[name="opening_balance"]').fill('1000');
+  await page.locator('#lenderForm button.btn-primary').click();
+  await page.waitForLoadState('load');
+  const post = async (type, amount) => {
+    await page.locator(type === 'received' ? 'label[for="etReceived"]' : 'label[for="etRepayment"]').click();
+    await page.locator('#loanLender').selectOption({ label: 'MB Lender' });
+    await page.evaluate(() => document.getElementById('loanAmount').removeAttribute('max'));
+    await page.locator('#loanAmount').fill(amount);
+    await page.locator('#loanMode').selectOption('cash');
+    await page.locator('#loanPost').click();
+    await page.waitForLoadState('load');
+    return alertText(page);
+  };
+  expect(await post('received', '50000')).toContain('Loan received');
+  expect(await post('repayment', '20000')).toContain('Repayment');
+  await expect(page.locator('#lenderTable tr', { hasText: 'MB Lender' })).toContainText('31,000.00');
+  expect(await post('repayment', '40000')).toContain('still owed');
+  await page.locator('#lenderTable tr', { hasText: 'MB Lender' }).locator('a', { hasText: 'Ledger' }).click();
+  await page.waitForLoadState('load');
+  await page.locator('tr', { hasText: 'Repayment' }).locator('button', { hasText: 'Void' }).first().click();
+  await page.waitForLoadState('load');
+  await expect(page.locator('#ledgerBalance')).toHaveText('51,000.00');
+});
+
+test('MB-31 expense history: date filter and PDF', async ({ page }) => {
+  await enterHo(page);
+  await openCash(page);
+  await page.goto('expenses', { waitUntil: 'load' });
+  if (await page.locator('select[name="category_id"] option').count() > 1) {
+    await page.locator('select[name="category_id"]').selectOption({ index: 1 });
+    await page.locator('input[name="amount"]').fill('1234.5');
+    await page.locator('select[name="payment_mode"]').selectOption('online');
+    await page.locator('input[name="description"]').fill('MB fuel');
+    await page.locator('button', { hasText: 'Post Expense' }).click();
+    await page.waitForLoadState('load');
+    await expect(page.locator('#expenseTable tbody')).toContainText('MB fuel');
+  }
+  await page.locator('#expFrom').fill('2020-01-01');
+  await page.locator('#expTo').fill('2020-01-31');
+  await page.locator('#expenseFilter button.btn-primary').click();
+  await page.waitForLoadState('load');
+  await expect(page.locator('#expenseTable tbody')).toContainText('No expenses in this period');
+  await page.goto('expenses', { waitUntil: 'load' });
+  await page.evaluate(() => { window.print = () => {}; });
+  const [popup] = await Promise.all([page.waitForEvent('popup'), page.locator('#expensePdf').click()]);
+  await popup.waitForLoadState();
+  expect(await popup.title()).toContain('Expense History');
+});

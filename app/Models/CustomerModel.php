@@ -31,8 +31,18 @@ class CustomerModel extends Model
         return self::homeOf($customer)===$locationId ? (float)($customer['opening_balance'] ?? 0) : 0.0;
     }
 
+    /**
+     * Split purchasing (each branch buys its own stock): every customer belongs to its home branch only,
+     * with its credit limit checked against that branch. Owner decision 2026-11-24.
+     */
+    public static function branchOnly(): bool
+    {
+        return BranchContext::purchaseMode()==='split';
+    }
+
     public static function isUsableAt(array $customer, int $locationId): bool
     {
+        if(self::branchOnly()) return self::homeOf($customer)===$locationId;
         return ($customer['branch_scope'] ?? 'shared')!=='branch' || self::homeOf($customer)===$locationId;
     }
 
@@ -50,9 +60,9 @@ class CustomerModel extends Model
     public static function applyVisibleAt($builder, int $locationId, string $alias='customers')
     {
         $headOffice=BranchContext::headOfficeId();
-        $builder->groupStart()
-            ->where($alias.'.branch_scope','shared')
-            ->orWhere($alias.'.home_location_id',$locationId);
+        $builder->groupStart();
+        if(self::branchOnly()) $builder->where($alias.'.home_location_id',$locationId);
+        else $builder->where($alias.'.branch_scope','shared')->orWhere($alias.'.home_location_id',$locationId);
         if($locationId===$headOffice) $builder->orWhere($alias.'.home_location_id IS NULL',null,false);
         return $builder->groupEnd();
     }

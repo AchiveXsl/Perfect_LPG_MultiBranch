@@ -13,7 +13,7 @@ class ShopSettingsModel extends Model
     protected $allowedFields = [
         'location_id','default_sale_mode','default_transaction_type','default_gas_entry_mode','pos_visible_transaction_types','individual_cylinder_tracking','allow_pos_source_cylinder_selection','include_security_deposit_in_os','deposit_payment_allocation_rule','allow_return_gas_qty','return_gas_affects_os','allow_empty_issued_return_gas','allow_return_gas_over_issued','default_payment_mode','pos_font_size_px','theme_mode','font_family','primary_color','accent_color',
         'stock_validation_enabled','allow_stock_override','credit_limit_validation_mode','shop_credit_limit','purchase_void_enabled',
-        'wholesale_price_list_enabled','default_price_list','walkin_price_list','customer_special_rates_enabled','pos_rate_change_mode','pos_price_list_switch','cost_method',
+        'wholesale_price_list_enabled','default_price_list','walkin_price_list','customer_special_rates_enabled','pos_rate_change_mode','pos_price_list_switch','cost_method','purchase_mode',
         'backup_enabled','db_backup_url','backup_notes',
         'smtp_host','smtp_port','smtp_username','smtp_password','smtp_encryption','smtp_from_email','smtp_from_name','smtp_enabled',
         'receipt_title','receipt_footer','show_address_on_receipt',

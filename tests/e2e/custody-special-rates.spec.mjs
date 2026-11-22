@@ -10,7 +10,8 @@ import { test, expect } from '@playwright/test';
 
 test.describe.configure({ mode: 'serial' });
 
-const TYPE = 'C11';
+// The 11.8 kg cylinder type code: C11_8 on a fresh database (schema.sql seed); older shop data used C11.
+const TYPE = process.env.LPG_CS_TYPE || 'C11_8';
 const CAPACITY = 11.8;
 const DEPOSIT = 2000;
 const CUSTOMERS = [
@@ -33,7 +34,20 @@ async function login() {
   if (await gate.count()) { await gate.click(); await page.waitForURL(/\/login/); }
   await page.fill('input[name="login"]', 'admin');
   await page.fill('input[name="password"]', 'admin123');
-  await Promise.all([page.waitForURL(/\/dashboard/), page.click('button[type="submit"]')]);
+  await Promise.all([page.waitForURL(/\/(dashboard|branches\/select)/), page.click('button[type="submit"]')]);
+  // Multi-branch: a user with several branches picks one first. These cases run in the Head Office.
+  if (page.url().includes('branches/select')) {
+    await Promise.all([page.waitForURL(/\/dashboard/), page.locator('.branch-card').filter({ hasText: 'Head Office' }).first().click()]);
+  }
+}
+
+// The POS shows a searchable customer box and keeps #customer_id hidden: set it the way the box does,
+// then wait for the customer's prices (POS reloads sales/rates?customer_id=… on a customer change).
+async function pickCustomer(id) {
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('sales/rates') && r.url().includes('customer_id=' + id), { timeout: 15_000 }).catch(() => {}),
+    page.locator('#customer_id').evaluate((s, v) => { s.value = v; s.dispatchEvent(new Event('change', { bubbles: true })); }, String(id)),
+  ]);
 }
 
 async function optionValue(select, startsWith) {
@@ -130,7 +144,7 @@ for (const c of CUSTOMERS) {
   test(`CS-04 Issue one filled ${TYPE} to ${c.name} at the special rate`, async () => {
     await page.goto('sales');
     await page.selectOption('#transactionType', 'security_deposit');
-    await page.selectOption('#customer_id', ids[c.name]);
+    await pickCustomer(ids[c.name]);
     await expect(page.locator('#specialRateBadge')).toBeVisible();
     await page.click('#openIssuePicker');
     await page.selectOption('#issuePickerType', typeId);
@@ -142,7 +156,10 @@ for (const c of CUSTOMERS) {
     await card.click();
     await page.click('#confirmIssuePicker');
     const perKg = c.fullCylinder / CAPACITY;
-    await expect(page.locator('#issueLinesBody .issueGasRateInput').first()).toHaveValue(perKg.toFixed(2));
+    // The issue line shows the editable gas rate per full cylinder (special per-KG rate x capacity).
+    const cylRate = page.locator('#issueLinesBody .issueCylRateInput').first();
+    await expect(cylRate).toBeVisible();
+    expect(Number(await cylRate.inputValue())).toBeCloseTo(c.fullCylinder, 0);
     const charge = round2(gas * perKg);
     await page.fill('#securityDeposit', String(DEPOSIT));
     await page.locator('.payment .amount').first().fill(String(round2(charge + DEPOSIT)));
@@ -175,7 +192,7 @@ for (const c of CUSTOMERS) {
   test(`CS-06 ${c.name} returns the cylinder and the deposit is refunded`, async () => {
     await page.goto('sales');
     await page.selectOption('#transactionType', 'cylinder_return');
-    await page.selectOption('#customer_id', ids[c.name]);
+    await pickCustomer(ids[c.name]);
     await page.click('#openReturnPicker');
     await page.locator(`#returnPickerCards input.returnPickCheck[value="${issued[c.name].unitId}"]`).locator('xpath=..').click();
     await page.click('#confirmReturnPicker');

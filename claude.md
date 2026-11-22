@@ -149,6 +149,7 @@ Current mappings include:
 - REPORT_VIEW
 - USER_MANAGE
 - AUDIT_VIEW
+- LOAN_MANAGE
 
 ### Automated CI status
 Latest verified CI result:
@@ -234,7 +235,15 @@ This repository started from AchiveXsl/Faizi_Traders and adds multi-branch suppo
 - Test cases and resume point: `multibranch_testcase.md`.
 - Read the current branch through `App\Services\BranchContext`, not `session('location_id')`, in new code.
 - New reports take a branch scope (`BranchContext::reportScope`) and filter with `whereIn('location_id', ...)`.
-- Purchases and supplier payments belong to the Head Office; stock lands at each purchase line's `receive_location_id`.
+- Purchasing mode (owner decision 2026-11-24), Shop Settings → Security & Void at the Head Office (`purchase_mode`, migration 046), read with `BranchContext::purchaseMode()` / `canPurchase()`:
+  - **Central** (default): purchases and supplier payments belong to the Head Office; stock lands at each purchase line's `receive_location_id`.
+  - **Split** (fully separate): each branch purchases only its own stock, owes and pays its own supplier balance from its own cash and voids its own purchases. The Head Office has no special purchasing role. `supplierBalance()` is per branch; the supplier opening balance stays with the Head Office.
+  - Split → Central is blocked while any other branch still owes a supplier.
+  - Split also makes **every customer branch-only** at its home branch, with credit checked against that branch only (`CustomerModel::branchOnly()`). The customer form shows the branch fields read-only; switching to Split sets `branch_scope` / `credit_scope` to branch for all customers. Migration 049 maps customers without a home branch to the Head Office. Switching back to Central leaves customers branch-only (editable again).
+
+## Cylinder types (owner decision 2026-11-24)
+- Only `cylinder_types.code` is unique. Several types may share one capacity (migration 047 drops the capacity unique index).
+- Never look a cylinder type up by capacity: stock, rates, costs, sales and imports all use `cylinder_type_id` or `code`.
 
 ## Gas Decanting (owner decision 2026-11-23)
 Screen: Inventory → Gas Decanting (`/inventory/decant`), permission `GAS_DECANT` (Admin and Manager by default).
@@ -244,3 +253,21 @@ Screen: Inventory → Gas Decanting (`/inventory/decant`), permission `GAS_DECAN
 - Each decanting has a number (DC...), header `gas_decants` and lines `gas_decant_items`, linked stock movements (`source_type='gas_decant'`) and an audit entry.
 - Gas cost stays correct automatically: gas cost layers are per branch in KG for all cylinder types together, so moving gas between cylinders of one branch does not change them.
 - Only stock changes: no sale, purchase, cash or customer effect. Cylinders in custody, in transit or sold cannot be used.
+
+## Loans (owner decision 2026-11-24)
+Screen: Cash & Expenses → Loans (`/loans`), permission `LOAN_MANAGE` (Admin by default), migration 048. Code: `LoanService`, `Loans` controller.
+- Records money the business **borrows** from a lender (a person who is neither customer nor supplier). No interest or profit share. Money lent out is not covered yet.
+- Each branch keeps its own lenders (`lenders.location_id`) and loans and repays them itself.
+- `loan_entries` holds every Loan Received (`LN...`) and Repayment (`LR...`). Balance owed = lender opening balance + received - repaid (posted only). A repayment cannot exceed what is owed.
+- A loan is a liability: never sales, profit or expense. Cash entries post counter cash `loan_received` (IN) / `loan_repayment` (OUT) and need an open cash session; cheque / online do not touch the counter.
+- Entries are voided with a reason, never deleted; the void reverses the cash in the session it was posted in. A received loan cannot be voided while part of it is repaid (void the repayment first). Lender opening balance is fixed once entries exist.
+
+## Purchase rate edit (owner decision 2026-11-24)
+- Purchases → History → a purchase → **Edit Rates** (PURCHASE_MANAGE, purchase of the current branch, not voided). Only the rate changes; quantity and stock never do. Reason required. Code: `PurchaseService::changeRates()` / `lineStockUse()`, history in `purchase_rate_changes` (migration 050).
+- Line total, purchase subtotal / total and `credit_amount` move by the difference (supplier payable adjusts; money already paid stays). The line cost layer takes the new unit cost.
+- While none of the line's stock is sold the change is applied directly. Once any is sold, the screen asks "stock is sold, change may affect profit / loss, apply the new rate to all linked sales?". Only on Yes (`confirm_sold=1`) it applies and restates `cost_layer_usage` and `sale_items.cost_*` of those sales (qty x unit-cost difference). Stock already transferred to another branch keeps the cost it carried.
+
+## Sale History / ledger exports (2026-11-24)
+- Sale History has a **Cylinders** column: cylinder codes with counts, e.g. `C11_8 (2), C45 (1)` (gas lines count KG / capacity, at least 1 per line). CSV and PDF exports include it.
+- Customer ledger PDF: the customer page has Export PDF at the top (same as the Details tab export), and Reports → Customer Ledger has its own Export PDF (opening balance, all rows, current OS).
+- Expense history: date filter (default current month), total row, Export PDF.

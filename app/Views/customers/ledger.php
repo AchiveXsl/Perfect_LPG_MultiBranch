@@ -28,7 +28,7 @@
 <?= $this->endSection() ?><?= $this->section('content') ?>
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div><h4 class="mb-1"><?=esc($customer['name'])?></h4><div class="text-muted small"><?=esc($customer['phone']??'')?><?=!empty($customer['city'])?' · '.esc($customer['city']):''?></div></div>
-  <a class="btn btn-outline-secondary" href="<?=site_url('customers')?>"><i class="bi bi-arrow-left me-1"></i>Back to Customers</a>
+  <div class="d-flex gap-2"><button type="button" class="btn btn-outline-danger" id="ledgerPdfTop" onclick="document.getElementById('slExportPdf').click()"><i class="bi bi-file-earmark-pdf me-1"></i>Export PDF</button><a class="btn btn-outline-secondary" href="<?=site_url('customers')?>"><i class="bi bi-arrow-left me-1"></i>Back to Customers</a></div>
 </div>
 
 <div class="row g-3 mb-4">

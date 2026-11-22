@@ -129,6 +129,7 @@ $groups=[
         'items'=>[
             ['permission'=>'CASH_MANAGE','url'=>'cash','label'=>'Counter Cash','icon'=>'bi-cash-stack'],
             ['permission'=>'EXPENSE_MANAGE','url'=>'expenses','label'=>'Expenses','icon'=>'bi-receipt'],
+            ['permission'=>'LOAN_MANAGE','url'=>'loans','label'=>'Loans','icon'=>'bi-bank'],
         ],
     ],
     'reporting'=>[
@@ -159,7 +160,7 @@ foreach($groups as $groupKey=>&$group){
     $atHeadOffice=\App\Services\BranchContext::isHeadOffice();
     $group['items']=array_values(array_filter($group['items'],static function(array $item) use ($can,$atHeadOffice): bool {
         // Central purchasing: these pages exist only while working in the Head Office.
-        if(!empty($item['head_office']) && !$atHeadOffice) return false;
+        if(!empty($item['head_office']) && !\App\Services\BranchContext::canPurchase()) return false;
         $required=$item['permission'];
         return is_array($required) ? (bool) array_filter($required,$can) : $can($required);
     }));

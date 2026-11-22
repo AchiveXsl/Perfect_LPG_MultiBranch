@@ -30,6 +30,8 @@ Every case is automated in [tests/e2e/pricing.spec.mjs](tests/e2e/pricing.spec.m
 - Waves 1–3 ran first. UI-09 failed there on debug-toolbar noise (see the notes), was fixed and passed.
 - Waves 4–7 then all passed. CR-07 was also made self-contained, and waves 6–7 passed again in the new single-session mode.
 
+**Re-run 2026-11-25 (multi-branch repository):** 57 of 57 passed on a fresh database (PHP 8.5.12, Apache 2.4.71, MySQL 8.4.13, migrations up to 050), headless wave runner. UI-03 (wave 3) and CR-04 (wave 5) timed out waiting for the save request with 4 parallel windows on the slow local stack; both passed when re-run alone, and waves 6–7 were run with `--workers 2`.
+
 **Next step:** nothing pending for the current scope. After any pricing change, run `npm run test:pricing:waves` and update this table.
 
 **Open work:**

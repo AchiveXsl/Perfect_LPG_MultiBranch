@@ -21,7 +21,8 @@ class Suppliers extends Controller
     {
         if($r=$this->guard()) return $r;
         // Purchasing is central: the supplier ledger is the Head Office account, whichever branch is viewing it.
-        $locationId=\App\Services\BranchContext::headOfficeId();
+        // Split purchasing: each branch has its own account with the supplier.
+        $locationId=\App\Services\BranchContext::purchaseMode()==='split'?\App\Services\BranchContext::currentId():\App\Services\BranchContext::headOfficeId();
         $supplier=$this->model->find($id);
         if(!$supplier) return $this->response->setStatusCode(404)->setBody('Supplier not found');
         $db=$this->model->db;
@@ -80,7 +81,7 @@ class Suppliers extends Controller
             $e['balance']=$running;
         }
         unset($e);
-        $canVoid=\App\Services\BranchContext::isHeadOffice() && (new PurchaseService())->canVoidPurchase((int)session()->get('user_id'),$locationId);
+        $canVoid=$locationId===\App\Services\BranchContext::currentId() && (new PurchaseService())->canVoidPurchase((int)session()->get('user_id'),$locationId);
         return view('suppliers/ledger',['title'=>'Supplier Ledger — '.$supplier['name'],'supplier'=>$supplier,'purchases'=>$purchases,'payments'=>$payments,'details'=>$events,'canVoid'=>$canVoid]);
     }
 

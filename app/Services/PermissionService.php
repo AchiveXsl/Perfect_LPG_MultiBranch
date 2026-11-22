@@ -54,6 +54,7 @@ class PermissionService
             'STOCK_TRANSFER' => 'Transfer stock between branches',
             'REPORT_ALL_BRANCHES' => 'View reports for all branches combined',
             'GAS_DECANT' => 'Move gas between cylinders (decanting)',
+            'LOAN_MANAGE' => 'Manage loans taken from lenders',
         ];
 
         foreach ($permissions as $code => $name) {

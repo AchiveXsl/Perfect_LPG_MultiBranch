@@ -17,7 +17,7 @@ class Purchases extends Controller
         if (!\App\Services\PermissionService::allows('PURCHASE_MANAGE')) {
             return $this->response->setStatusCode(403)->setBody('Forbidden');
         }
-        if (!BranchContext::isHeadOffice()) {
+        if (!BranchContext::canPurchase()) {
             $ho = BranchContext::find(BranchContext::headOfficeId());
             $message = 'Purchases are entered at the Head Office' . ($ho ? ' (' . $ho['name'] . ')' : '') . '. Switch to the Head Office branch to purchase stock for any branch.';
             if ($this->request->isAJAX()) {
@@ -86,7 +86,7 @@ class Purchases extends Controller
                 $purchaseIds = array_map(static fn(array $row): int => (int) $row['id'], $history);
 
                 $items = $db->table('purchase_items pi')
-                    ->select('pi.purchase_id, pi.line_no, pi.line_type, pi.quantity, pi.actual_gas_weight_kg, pi.unit_rate, pi.line_total, ct.code AS cylinder_code, ct.name AS cylinder_name, rl.name AS receive_location_name')
+                    ->select('pi.id, pi.purchase_id, pi.line_no, pi.line_type, pi.quantity, pi.actual_gas_weight_kg, pi.unit_rate, pi.line_total, ct.code AS cylinder_code, ct.name AS cylinder_name, rl.name AS receive_location_name')
                     ->join('cylinder_types ct', 'ct.id = pi.cylinder_type_id', 'left')
                     ->join('locations rl', 'rl.id = pi.receive_location_id', 'left')
                     ->whereIn('pi.purchase_id', $purchaseIds)
@@ -110,7 +110,15 @@ class Purchases extends Controller
                     ];
                 }
 
+                // How much of each line is already sold (rate edits ask before restating those sales).
+                $stockUse = [];
+                foreach ($history as $h) {
+                    if ($h['status'] === 'posted') $stockUse += $purchaseService->lineStockUse((int) $h['id']);
+                }
                 foreach ($items as $item) {
+                    $item['sold_qty'] = $stockUse[(int) $item['id']]['sold'] ?? 0;
+                    $item['moved_qty'] = $stockUse[(int) $item['id']]['moved'] ?? 0;
+                    $item['stock_unit'] = $stockUse[(int) $item['id']]['unit'] ?? '';
                     $purchaseDetails[(int) $item['purchase_id']]['items'][] = $item;
                 }
 
@@ -121,7 +129,12 @@ class Purchases extends Controller
         }
 
         // Empty cylinders on hand per branch and cylinder type: a refill line uses the receiving branch's empties.
+        // Split purchasing: a branch buys only its own stock.
+        $split = BranchContext::purchaseMode() === 'split';
         $branches = BranchContext::allActive();
+        if ($split) {
+            $branches = array_values(array_filter($branches, static fn($b) => (int) $b['id'] === BranchContext::currentId()));
+        }
         $emptyStock = [];
         $emptyRows = $db->table('cylinder_units')
             ->select('location_id, cylinder_type_id, COUNT(*) AS total')
@@ -147,7 +160,7 @@ class Purchases extends Controller
             'canVoidPurchases' => $canVoidPurchases,
             'emptyStock'       => $emptyStock,
             'branches'         => $branches,
-            'headOfficeId'     => BranchContext::headOfficeId(),
+            'headOfficeId'     => $split ? BranchContext::currentId() : BranchContext::headOfficeId(),
             'types'            => $db->table('cylinder_types')
                 ->where('is_active', 1)
                 ->orderBy('sort_order')
@@ -233,7 +246,6 @@ class Purchases extends Controller
         if ($r = $this->guard()) {
             return $r;
         }
-
         $db = Database::connect();
         $locationId = (int) session()->get('location_id');
         $purchase = $db->table('purchases p')
@@ -256,6 +268,30 @@ class Purchases extends Controller
         $supplierBalance = round((new PurchaseService())->supplierBalance((int) $purchase['supplier_id'], $locationId), 2);
 
         return view('purchases/receipt', compact('purchase', 'items', 'payments', 'location', 'supplierBalance'));
+    }
+
+    /** Change purchase line rates after posting. Sold stock needs confirm_sold=1 (restates linked sales). */
+    public function changeRates(int $id)
+    {
+        if ($r = $this->guard()) {
+            return $r;
+        }
+        $back = site_url('purchases?tab=history&from_date=' . rawurlencode((string) $this->request->getPost('from_date')) . '&to_date=' . rawurlencode((string) $this->request->getPost('to_date')));
+        try {
+            $res = (new PurchaseService())->changeRates(
+                $id,
+                (array) $this->request->getPost('rates'),
+                (string) $this->request->getPost('reason'),
+                (string) $this->request->getPost('confirm_sold') === '1',
+                (int) session()->get('user_id'),
+                BranchContext::currentId()
+            );
+            $msg = 'Purchase ' . $res['purchase_no'] . ' rates updated. Total changed by Rs. ' . number_format($res['delta'], 2) . ' (supplier payable adjusted).';
+            if ($res['sales'] > 0) $msg .= ' Cost and profit of ' . $res['sales'] . ' linked sale line(s) restated.';
+            return redirect()->to($back)->with('success', $msg);
+        } catch (\Throwable $e) {
+            return redirect()->to($back)->with('error', $e->getMessage());
+        }
     }
 
     public function void(int $id)

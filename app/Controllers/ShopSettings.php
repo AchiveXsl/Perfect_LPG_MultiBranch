@@ -3,6 +3,8 @@
 namespace App\Controllers;
 
 use App\Models\ShopSettingsModel;
+use App\Services\BranchContext;
+use App\Services\PurchaseService;
 use App\Services\CostService;
 use App\Services\InventoryControlService;
 use App\Services\PermissionService;
@@ -145,6 +147,27 @@ class ShopSettings extends Controller
         }
 
         $db = Database::connect();
+
+        // Purchasing mode is company-wide and set only from the Head Office.
+        $purchaseMode = null;
+        if (BranchContext::isHeadOffice($locationId) && $this->request->getPost('purchase_mode') !== null) {
+            $purchaseMode = (string) $this->request->getPost('purchase_mode') === 'split' ? 'split' : 'central';
+            if ($purchaseMode === 'central' && BranchContext::purchaseMode() === 'split') {
+                // Owner rule: every other branch must clear its supplier balances before going back to central.
+                $ps = new PurchaseService();
+                $owing = [];
+                foreach (BranchContext::allActive() as $b) {
+                    if ((int) $b['id'] === $locationId) continue;
+                    foreach ($db->table('suppliers')->select('id')->get()->getResultArray() as $sup) {
+                        if ($ps->supplierBalance((int) $sup['id'], (int) $b['id']) > 0.005) { $owing[] = $b['name']; break; }
+                    }
+                }
+                if ($owing) {
+                    return redirect()->back()->withInput()->with('error', 'Cannot switch to central purchasing: these branches still owe suppliers: ' . implode(', ', $owing) . '. Clear their supplier balances first.');
+                }
+            }
+        }
+
         $db->transBegin();
 
         try {
@@ -189,6 +212,7 @@ class ShopSettings extends Controller
                 'pos_rate_change_mode' => $rateChangeMode,
                 'pos_price_list_switch' => $priceListSwitch,
                 'cost_method' => $costMethod,
+                ...($purchaseMode !== null ? ['purchase_mode' => $purchaseMode] : []),
                 'purchase_void_enabled' => $purchaseVoidEnabled,
                 'backup_enabled' => $this->request->getPost('backup_enabled') ? 1 : 0,
                 'db_backup_url' => trim((string) $this->request->getPost('db_backup_url')) ?: null,
@@ -249,6 +273,10 @@ class ShopSettings extends Controller
                 'ip_address'=>$this->request->getIPAddress(),
                 'user_agent'=>substr((string)$this->request->getUserAgent(),0,500)
             ]);
+            // Split purchasing: every customer becomes branch-only at its home branch (Head Office when none).
+            if ($purchaseMode === 'split') {
+                $db->query("UPDATE customers SET branch_scope='branch', credit_scope='branch', home_location_id=COALESCE(home_location_id, ?)", [BranchContext::headOfficeId()]);
+            }
             if (!$db->transStatus()) {
                 throw new \RuntimeException('Shop settings could not be saved.');
             }

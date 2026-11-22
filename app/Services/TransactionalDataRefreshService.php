@@ -40,6 +40,8 @@ class TransactionalDataRefreshService
             'cash_transactions',
             'cash_sessions',
             'expenses',
+            'loan_entries',
+            'lenders',
             'daily_filled_stock',
             'daily_empty_stock',
             'daily_summaries',
