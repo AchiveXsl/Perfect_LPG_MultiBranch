@@ -281,3 +281,5 @@ html[lang="ur"] .wl-card .gp-btn{font-size:20px}
   .content-wrap{padding:14px 12px}
   .table-responsive{-webkit-overflow-scrolling:touch}
 }
+/* Never wrap menu items into a hidden second column when an open group is taller than the screen: scroll instead. */
+.sidebar > .nav{flex-wrap:nowrap!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch}
