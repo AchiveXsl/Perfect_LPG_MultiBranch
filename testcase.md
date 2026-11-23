@@ -237,3 +237,7 @@ The database check after the run matched the screen:
 - **2026-10-21, first run:** 36 of 36 TRUE (earlier design, HTTP and headless).
 - **2026-10-21, headed one by one:** S-01 … POS-P20 PASS; UI not run.
 - **2026-10-21, final code, parallel waves:** 57 of 57 PASS.
+
+### 2026-11-23 — retail gas sale re-check (multi-branch code)
+Environment: PHP 8.5.12 + Apache 2.4.71 + MySQL 8.4.13 (local test copy). Ran S-01…S-05, PS-01…PS-04, POS-P01, P02, P03, P07, P11, P12, CR-05, UI-01: **17 / 17 PASS**.
+Test helper updates only (no app change): `login()` picks the Head Office branch card when the user has several branches; `openPos()` sets the customer through the POS's searchable customer box (the plain `#customer_id` select is hidden) and waits for the customer's rates to load.

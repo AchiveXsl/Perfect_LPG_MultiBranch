@@ -31,7 +31,11 @@ async function login() {
   }
   await page.fill('input[name="login"]', 'admin');
   await page.fill('input[name="password"]', 'admin123');
-  await Promise.all([page.waitForURL(/\/dashboard/), page.click('button[type="submit"]')]);
+  await Promise.all([page.waitForURL(/\/(dashboard|branches\/select)/), page.click('button[type="submit"]')]);
+  // Multi-branch: a user with several branches picks one first. Pricing cases run in the Head Office.
+  if (page.url().includes('branches/select')) {
+    await Promise.all([page.waitForURL(/\/dashboard/), page.locator('.branch-card').filter({ hasText: 'Head Office' }).first().click()]);
+  }
 }
 
 async function optionValue(select, startsWith) {
@@ -65,7 +69,12 @@ async function openPos(type, customerName = '', priceList = '') {
   await page.selectOption('#transactionType', type);
   if (customerName) {
     const id = await page.locator('#customer_id option').filter({ hasText: new RegExp('^' + customerName + '$') }).first().getAttribute('value');
-    await page.selectOption('#customer_id', id);
+    // The POS shows a searchable customer box and keeps #customer_id hidden: set it the way the box does.
+    // Wait for the customer's prices: POS reloads sales/rates?customer_id=… on a customer change.
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('sales/rates') && r.url().includes('customer_id=' + id), { timeout: 15_000 }).catch(() => {}),
+      page.locator('#customer_id').evaluate((s, v) => { s.value = v; s.dispatchEvent(new Event('change', { bubbles: true })); }, id),
+    ]);
   }
   if (priceList) await page.selectOption('#priceList', priceList);
   return page.locator('#lines tbody tr:not(.cylinderPickerRow)').first();
