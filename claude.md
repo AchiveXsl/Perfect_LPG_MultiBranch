@@ -74,7 +74,7 @@ The branch default transaction type is stored in `shop_settings.default_transact
 - Security deposit is a liability/hold, not sales revenue. The gas charged on an issue IS sales revenue: Dashboard and Reports use `SalesService::revenueSaleCondition()` (Gas Sale, Cylinder Sale, Security Deposit with total_amount > 0; never Cylinder Return), and payment-mode totals count only `payment_type = 'sale'`.
 - Cylinder return requires the customer's custody cylinder and refunds the applicable deposit.
 - Repeated custody cycles are supported.
-- Security deposit and cylinder-return transactions are not treated like ordinary voidable revenue sales.
+- Security Deposit and Cylinder Return can be voided (owner decision 2026-11-23) only while their cylinders are untouched since: `SalesService::reverseCustodySale()` reverses custody, cylinders (state and gas), stock movements, deposit ledger (opposite hold/refund entries) and counter cash; customer OS follows from VOID. Refused when a cylinder was returned, refilled, sold, transferred or adjusted afterwards. Gas sales that refill a custody cylinder stay non-voidable.
 
 ### Customer OS / payments / credit
 - Previous customer OS is carried into the current receivable.

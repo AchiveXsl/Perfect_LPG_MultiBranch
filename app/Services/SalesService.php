@@ -1185,13 +1185,19 @@ class SalesService
             $sale=$this->db->query("SELECT * FROM sales WHERE id=? AND location_id=? FOR UPDATE",[$saleId,$locationId])->getRowArray();
             if(!$sale) throw new RuntimeException('Sale not found.');
             if($sale['status']!=='posted') throw new RuntimeException('Only posted sales can be voided.');
-            if(in_array($sale['transaction_type'],['security_deposit','cylinder_return'],true)) throw new RuntimeException('Security Deposit and Cylinder Return transactions cannot be voided. Use the custody workflow so the liability and physical cylinder remain consistent.');
+            $custodyType=in_array($sale['transaction_type'],['security_deposit','cylinder_return'],true);
             if($sale['transaction_type']==='gas_sale'){
                 $custodyLine=(int)$this->db->table('sale_items')->where('sale_id',$saleId)->where('customer_cylinder_unit_id IS NOT NULL',null,false)->countAllResults();
                 if($custodyLine>0) throw new RuntimeException('Gas sales that refill a customer custody cylinder cannot be voided after posting.');
             }
 
-            $movements=$this->db->table('inventory_movements')->where('source_type','sale')->where('source_id',$saleId)->get()->getResultArray();
+            if($custodyType){
+                // Security Deposit / Cylinder Return: reverse custody, stock, deposit ledger and cash together.
+                $this->reverseCustodySale($sale,$userId);
+                $movements=[];
+            }else{
+                $movements=$this->db->table('inventory_movements')->where('source_type','sale')->where('source_id',$saleId)->get()->getResultArray();
+            }
             $this->acquireInventoryLocks($locationId,$movements);
 
             // A single physical filled-cylinder sale/refill can have two OUT movements:
@@ -1238,7 +1244,8 @@ class SalesService
                     if(!$converted) $this->cylinders->markSold($unitId);
                 }
             }
-            $cashRows=$this->db->table('cash_transactions')->where('reference_type','sale')->where('reference_id',$saleId)->where('transaction_type','sale_cash')->where('direction','in')->get()->getResultArray();
+            // Custody sales reversed all their cash in reverseCustodySale().
+            $cashRows=$custodyType?[]:$this->db->table('cash_transactions')->where('reference_type','sale')->where('reference_id',$saleId)->where('transaction_type','sale_cash')->where('direction','in')->get()->getResultArray();
             $existingReversal=(int)$this->db->table('cash_transactions')->where('reference_type','sale_void')->where('reference_id',$saleId)->where('transaction_type','sale_cash')->where('direction','out')->countAllResults();
             if($existingReversal>0) throw new RuntimeException('Cash reversal for this sale already exists.');
             foreach($cashRows as $cash){
@@ -1302,6 +1309,116 @@ class SalesService
             $this->db->transRollback();
             throw $e;
         }
+    }
+
+    /**
+     * Reverse a Security Deposit or Cylinder Return, as long as nothing has happened to its cylinders since.
+     *
+     * Security Deposit: issued cylinders come back into stock in the state they left (filled/empty, gas KG), their
+     *   custody rows become 'voided', and cylinders the customer handed back with the issue go back into custody.
+     * Cylinder Return: the returned cylinders go back into the customer's custody with the gas they held at issue.
+     * Both: every stock movement gets an opposite movement, every deposit ledger entry an opposite entry, and every
+     * counter-cash entry an opposite entry. The customer's OS follows from the sale becoming VOID.
+     * Refused when a cylinder moved again after this transaction (returned, refilled, sold, transferred, adjusted).
+     */
+    protected function reverseCustodySale(array $sale,int $userId): void
+    {
+        $saleId=(int)$sale['id'];
+        $customerId=(int)$sale['customer_id'];
+        $no=(string)$sale['sale_no'];
+        $now=date('Y-m-d H:i:s');
+        $this->db->query('SELECT id FROM customers WHERE id=? FOR UPDATE',[$customerId]);
+
+        $movements=$this->db->table('inventory_movements')->where('source_id',$saleId)
+            ->whereIn('source_type',['security_deposit','cylinder_return'])->orderBy('id')->get()->getResultArray();
+        $lastMovement=[];
+        foreach($movements as $m){ if($m['cylinder_unit_id']) $lastMovement[(int)$m['cylinder_unit_id']]=(int)$m['id']; }
+
+        $issued=$sale['transaction_type']==='security_deposit'
+            ? $this->db->query('SELECT * FROM cylinder_custody WHERE issue_sale_id=? FOR UPDATE',[$saleId])->getResultArray() : [];
+        $returned=$this->db->query('SELECT * FROM cylinder_custody WHERE return_sale_id=? FOR UPDATE',[$saleId])->getResultArray();
+
+        $unitOf=function(array $cc) use ($no): array {
+            $u=$this->db->query('SELECT * FROM cylinder_units WHERE id=? FOR UPDATE',[(int)$cc['cylinder_unit_id']])->getRowArray();
+            if(!$u) throw new RuntimeException('Cylinder of '.$no.' could not be found.');
+            return $u;
+        };
+        $assertUntouched=function(array $u) use ($lastMovement,$saleId,$no): void {
+            $after=(int)($lastMovement[(int)$u['id']] ?? 0);
+            $later=(int)$this->db->table('inventory_movements')->where('cylinder_unit_id',(int)$u['id'])->where('id >',$after)
+                // Movements of sales that were voided since (and their reversals) cancel out and do not count as later use.
+                ->where("NOT (source_type IN ('sale','security_deposit','cylinder_return','sale_void') AND source_id IN (SELECT id FROM sales WHERE status='voided' OR id=".(int)$saleId."))",null,false)->countAllResults();
+            $refill=(int)$this->db->query("SELECT COUNT(*) n FROM sale_items si JOIN sales s ON s.id=si.sale_id WHERE si.customer_cylinder_unit_id=? AND s.id>? AND s.status='posted' AND s.transaction_type='gas_sale'",[(int)$u['id'],$saleId])->getRowArray()['n'];
+            if($later>0||$refill>0) throw new RuntimeException('Sale '.$no.' cannot be voided: cylinder '.$u['unit_code'].' has been used in a later transaction. Post a '.($refill>0?'correction for the refill first':'Cylinder Return / Security Deposit').' instead.');
+        };
+
+        // Cylinders issued by a Security Deposit must still be with this customer, untouched.
+        $restoreIssued=[];
+        foreach($issued as $cc){
+            $u=$unitOf($cc);
+            if($cc['status']!=='issued'||$u['status']!=='custody'||(int)$u['custody_customer_id']!==$customerId){
+                throw new RuntimeException('Sale '.$no.' cannot be voided: cylinder '.$u['unit_code'].' is no longer with the customer (already returned). Void that return first, or post a Cylinder Return.');
+            }
+            $assertUntouched($u);
+            $restoreIssued[]=[$cc,$u];
+        }
+        // Cylinders taken back by this transaction must still be in this branch's stock, untouched.
+        $restoreReturned=[];
+        foreach($returned as $cc){
+            $u=$unitOf($cc);
+            if($cc['status']!=='returned'||!in_array($u['status'],['filled','empty'],true)||(int)$u['location_id']!==(int)$sale['location_id']){
+                throw new RuntimeException('Sale '.$no.' cannot be voided: returned cylinder '.$u['unit_code'].' is no longer in stock here.');
+            }
+            $assertUntouched($u);
+            // A refill while it was with the customer changed its gas, so the gas to restore is not known.
+            $refilled=(int)$this->db->query("SELECT COUNT(*) n FROM sale_items si JOIN sales s ON s.id=si.sale_id WHERE si.customer_cylinder_unit_id=? AND s.id>? AND s.id<? AND s.status='posted' AND s.transaction_type='gas_sale'",[(int)$u['id'],(int)($cc['issue_sale_id']??0),$saleId])->getRowArray()['n'];
+            if($refilled>0) throw new RuntimeException('Sale '.$no.' cannot be voided: cylinder '.$u['unit_code'].' was refilled while with the customer. Post a Security Deposit to issue it again instead.');
+            $restoreReturned[]=[$cc,$u];
+        }
+
+        // Stock movements: one opposite movement each.
+        foreach($movements as $m){
+            $this->db->table('inventory_movements')->insert([
+                'location_id'=>$m['location_id'],'inventory_type'=>$m['inventory_type'],'cylinder_type_id'=>$m['cylinder_type_id'],
+                'quantity'=>$m['quantity'],'direction'=>$m['direction']==='in'?'out':'in','movement_at'=>$now,
+                'source_type'=>'sale_void','source_id'=>$saleId,'source_line_id'=>$m['source_line_id']??null,
+                'cylinder_unit_id'=>$m['cylinder_unit_id']??null,'created_by'=>$userId,'notes'=>'Reversal of '.$no,
+            ]);
+        }
+        // Issued cylinders back into stock, as they left.
+        foreach($restoreIssued as [$cc,$u]){
+            $filled=$cc['issued_condition']==='filled'&&(float)$cc['issued_gas_weight_kg']>0;
+            $this->db->table('cylinder_units')->where('id',(int)$u['id'])->update(['status'=>$filled?'filled':'empty','custody_customer_id'=>null,'gas_weight_kg'=>$filled?(float)$cc['issued_gas_weight_kg']:0]);
+            $this->db->table('cylinder_custody')->where('id',(int)$cc['id'])->update(['status'=>'voided','updated_by'=>$userId]);
+        }
+        // Returned cylinders back into the customer's custody, with the gas they held at issue.
+        foreach($restoreReturned as [$cc,$u]){
+            $this->db->table('cylinder_units')->where('id',(int)$u['id'])->update(['status'=>'custody','custody_customer_id'=>(int)$cc['customer_id'],'gas_weight_kg'=>(float)$cc['issued_gas_weight_kg']]);
+            $this->db->table('cylinder_custody')->where('id',(int)$cc['id'])->update([
+                'status'=>'issued','return_sale_id'=>null,'returned_at'=>null,'refund_amount'=>0,
+                'returned_gas_weight_kg'=>0,'consumed_gas_weight_kg'=>0,'return_gas_rate'=>0,'updated_by'=>$userId,
+            ]);
+        }
+        // Deposit ledger: an opposite entry for each hold / refund of this transaction.
+        foreach($this->db->table('customer_security_deposits')->where('sale_id',$saleId)->get()->getResultArray() as $d){
+            $this->db->table('customer_security_deposits')->insert([
+                'location_id'=>$d['location_id'],'customer_id'=>$d['customer_id'],'entry_type'=>$d['entry_type']==='hold'?'refund':'hold',
+                'amount'=>$d['amount'],'sale_id'=>$saleId,'custody_id'=>$d['custody_id'],'transaction_at'=>$now,'created_by'=>$userId,
+                'notes'=>'Reversal of '.$no,
+            ]);
+        }
+        // Counter cash: deposit received / refunded and gas amount, each reversed in its own session.
+        if((int)$this->db->table('cash_transactions')->where(['reference_type'=>'sale_void','reference_id'=>$saleId])->countAllResults()>0){
+            throw new RuntimeException('Cash reversal for this sale already exists.');
+        }
+        foreach($this->db->table('cash_transactions')->where(['reference_type'=>'sale','reference_id'=>$saleId])->get()->getResultArray() as $cash){
+            $this->db->table('cash_transactions')->insert([
+                'cash_session_id'=>$cash['cash_session_id'],'transaction_type'=>$cash['transaction_type'],'direction'=>$cash['direction']==='in'?'out':'in',
+                'amount'=>$cash['amount'],'transaction_at'=>$now,'reference_type'=>'sale_void','reference_id'=>$saleId,'created_by'=>$userId,
+                'notes'=>'Cash reversal of '.$no,
+            ]);
+        }
+        if(!$this->db->transStatus()) throw new RuntimeException('Reversal of '.$no.' failed.');
     }
 
     /**
