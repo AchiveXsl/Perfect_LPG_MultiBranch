@@ -1099,7 +1099,9 @@ function renderIssueLines(){
      +'<td class="col-phys">'+physical+'</td>'
      +'<td class="text-end">'+(l.selected_cylinder_unit_ids||[]).length+'</td>'
      +'<td class="text-end">'+gas.toFixed(2)+'</td>'
-     +'<td class="text-end">'+(l.status==='filled'&&perCylRate!=null?fmtMoney(perCylRate):'—')+'</td>'
+     /* Per full-cylinder gas rate: editable like other POS rates (read-only when Shop Settings says Not allowed).
+        Stored as a per-KG rate (rate ÷ capacity), so a part-filled cylinder is charged for its actual gas. */
+     +'<td class="text-end">'+(l.status==='filled'?'<input class="form-control form-control-sm text-end issueCylRateInput" data-index="'+i+'" type="number" min="0" step="0.01" value="'+(shownRate*Number(capacityOf(l.type_id)||0)).toFixed(2)+'"'+(rateChangeMode==='not_allowed'?' readonly':'')+' title="Gas rate per full cylinder (default from LPG Rates)" style="min-width:110px">':'—')+'</td>'
      +'<td class="text-end fw-semibold">'+fmtMoney(amount)+'</td>'
      +'<td class="text-end issue-held-cell">'+issuedNow+'</td>'
      +'<td class="text-end issue-return-cell"><input class="form-control form-control-sm text-end issueReturnInput" data-index="'+i+'" type="number" min="0" max="'+issuedNow+'" step="1" value="'+Number(l.return_qty||0)+'"'+(issuedNow>0?'':' readonly')+' title="Issued cylinders to take back (empty). Cannot be more than '+issuedNow+'"></td>'
@@ -1111,6 +1113,17 @@ function renderIssueLines(){
  body.querySelectorAll('.issueReturnInput').forEach(el=>{
    const mark=()=>{const i=Number(el.dataset.index),l=issueLines[i];if(!l)return;const over=Number(el.value||0)>customerIssuedCount(l.type_id);el.classList.toggle('is-invalid',over);};
    el.oninput=()=>{const i=Number(el.dataset.index);if(!issueLines[i])return;issueLines[i].return_qty=el.value===''?0:Number(el.value);mark();};mark();
+ });
+ body.querySelectorAll('.issueCylRateInput').forEach(el=>el.oninput=()=>{
+   const i=Number(el.dataset.index),l=issueLines[i];
+   if(!l)return;
+   const cap=Number(capacityOf(l.type_id)||0);
+   l.gas_rate=cap>0?Math.max(0,Number(el.value||0))/cap:0;
+   l.gas_rate_edited=true;
+   // Update this line's amount in place (re-rendering would move the cursor), then the totals.
+   const amountCell=el.closest('td')?.nextElementSibling;
+   if(amountCell)amountCell.textContent=fmtMoney(Number(l.gas_weight_kg||0)*l.gas_rate);
+   recalc();updateRateReasonBox();
  });
  body.querySelectorAll('.issueGasRateInput').forEach(el=>el.oninput=()=>{
    const i=Number(el.dataset.index);
