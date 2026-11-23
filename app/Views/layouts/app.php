@@ -107,6 +107,7 @@ $groups=[
             ['permission'=>'INVENTORY_MANAGE','url'=>'inventory/opening','label'=>'Opening Inventory','icon'=>'bi-archive'],
             ['permission'=>'INVENTORY_MANAGE','url'=>'inventory/old-issued','label'=>'Old Issued Cylinders','icon'=>'bi-journal-arrow-up'],
             ['permission'=>'INVENTORY_MANAGE','url'=>'inventory/fill-empty','label'=>'Fill / Empty Cylinders','icon'=>'bi-fuel-pump'],
+            ['permission'=>'GAS_DECANT','url'=>'inventory/decant','label'=>'Gas Decanting','icon'=>'bi-arrow-down-up'],
             ['permission'=>'INVENTORY_MANAGE','url'=>'cylinder-types','label'=>'Cylinder Types','icon'=>'bi-box'],
             ['permission'=>'INVENTORY_MANAGE','url'=>'inventory/adjustments','label'=>'Stock Adjustment & History','icon'=>'bi-sliders2-vertical'],
             ['permission'=>'STOCK_TRANSFER','url'=>'stock-transfers','label'=>'Stock Transfers','icon'=>'bi-arrow-left-right'],

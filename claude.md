@@ -235,3 +235,12 @@ This repository started from AchiveXsl/Faizi_Traders and adds multi-branch suppo
 - Read the current branch through `App\Services\BranchContext`, not `session('location_id')`, in new code.
 - New reports take a branch scope (`BranchContext::reportScope`) and filter with `whereIn('location_id', ...)`.
 - Purchases and supplier payments belong to the Head Office; stock lands at each purchase line's `receive_location_id`.
+
+## Gas Decanting (owner decision 2026-11-23)
+Screen: Inventory → Gas Decanting (`/inventory/decant`), permission `GAS_DECANT` (Admin and Manager by default).
+- Moves gas from one filled shop cylinder (source) into one or more empty / part-filled shop cylinders (targets) of the same branch, e.g. 20 KG from a 45 kg cylinder into 2 × 10 kg cylinders.
+- Total gas never changes: source loses exactly what the targets gain. A target cannot exceed its capacity; the source cannot give more than it holds.
+- Targets become `filled`; a source left with 0 KG becomes `empty`.
+- Each decanting has a number (DC...), header `gas_decants` and lines `gas_decant_items`, linked stock movements (`source_type='gas_decant'`) and an audit entry.
+- Gas cost stays correct automatically: gas cost layers are per branch in KG for all cylinder types together, so moving gas between cylinders of one branch does not change them.
+- Only stock changes: no sale, purchase, cash or customer effect. Cylinders in custody, in transit or sold cannot be used.
