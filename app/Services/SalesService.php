@@ -1187,8 +1187,18 @@ class SalesService
             if($sale['status']!=='posted') throw new RuntimeException('Only posted sales can be voided.');
             $custodyType=in_array($sale['transaction_type'],['security_deposit','cylinder_return'],true);
             if($sale['transaction_type']==='gas_sale'){
-                $custodyLine=(int)$this->db->table('sale_items')->where('sale_id',$saleId)->where('customer_cylinder_unit_id IS NOT NULL',null,false)->countAllResults();
-                if($custodyLine>0) throw new RuntimeException('Gas sales that refill a customer custody cylinder cannot be voided after posting.');
+                // Refill of a customer's custody cylinder: take the added gas back off that cylinder.
+                // The shop side (gas out of shop cylinders) is reversed below like any gas sale.
+                $refills=$this->db->table('sale_items')->where('sale_id',$saleId)->where('customer_cylinder_unit_id IS NOT NULL',null,false)->get()->getResultArray();
+                foreach($refills as $it){
+                    $unitId=(int)$it['customer_cylinder_unit_id'];
+                    $u=$this->db->query('SELECT * FROM cylinder_units WHERE id=? FOR UPDATE',[$unitId])->getRowArray();
+                    $later=(int)$this->db->query("SELECT COUNT(*) n FROM sale_items si JOIN sales s ON s.id=si.sale_id WHERE si.customer_cylinder_unit_id=? AND s.id>? AND s.status='posted'",[$unitId,$saleId])->getRowArray()['n'];
+                    if(!$u||$u['status']!=='custody'||(int)$u['custody_customer_id']!==(int)$sale['customer_id']||$later>0||(float)$u['gas_weight_kg']+0.0005<(float)$it['quantity']){
+                        throw new RuntimeException('Sale '.$sale['sale_no'].' cannot be voided: customer cylinder '.($u['unit_code']??$unitId).' was refilled again or returned afterwards. Void that later transaction first.');
+                    }
+                    $this->db->table('cylinder_units')->where('id',$unitId)->update(['gas_weight_kg'=>max(0,round((float)$u['gas_weight_kg']-(float)$it['quantity'],3))]);
+                }
             }
 
             if($custodyType){
