@@ -19,6 +19,9 @@ class CylinderTypes extends Controller
         $id=(int)$this->request->getPost('id');
         $data=['code'=>trim((string)$this->request->getPost('code')),'name'=>trim((string)$this->request->getPost('name')),'capacity_kg'=>(float)$this->request->getPost('capacity_kg'),'tare_weight_kg'=>$this->request->getPost('tare_weight_kg')===''?null:(float)$this->request->getPost('tare_weight_kg'),'empty_cylinder_price'=>max(0,(float)$this->request->getPost('empty_cylinder_price')),'sort_order'=>(int)$this->request->getPost('sort_order'),'is_active'=>$this->request->getPost('is_active')?1:0];
         if($data['code']===''||$data['name']===''||$data['capacity_kg']<=0) return redirect()->back()->withInput()->with('error','Code, name and positive capacity are required.');
+        // Only the code is unique: several types may share one capacity (e.g. two 11.8 kg brands).
+        $dup=$this->model->where('code',$data['code']); if($id) $dup->where('id !=',$id);
+        if($dup->countAllResults()>0) return redirect()->back()->withInput()->with('error','Cylinder type code '.$data['code'].' is already used. Each type needs its own code.');
         try {
             if($id){ if(!$this->model->find($id)) throw new \RuntimeException('Cylinder type not found.'); $this->model->update($id,$data); }
             else $this->model->insert($data);

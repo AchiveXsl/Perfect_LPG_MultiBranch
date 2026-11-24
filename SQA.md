@@ -61,7 +61,7 @@ For financial/inventory cases, capture enough evidence to reconcile:
 | B05 | Customer inactive | Mark customer inactive | Customer cannot be selected for a new active transaction | | | NOT EXECUTED |
 | B06 | Supplier create/edit | Create then edit SQA supplier | Record saves and edited values persist | | | NOT EXECUTED |
 | B07 | Supplier duplicate code | Reuse supplier code | Save rejected without corrupting existing supplier | | | NOT EXECUTED |
-| B08 | Cylinder type create/edit | Create 20 kg SQA type; edit capacity/tare | Valid values save; duplicate code/capacity and invalid capacity are rejected | | | NOT EXECUTED |
+| B08 | Cylinder type create/edit | Create 20 kg SQA type; edit capacity/tare | Valid values save; duplicate code and invalid capacity are rejected; a second type with an existing capacity but a new code saves | | | NOT EXECUTED |
 | B09 | Cylinder capacity validation | Try capacity 0 or negative | Save rejected | | | NOT EXECUTED |
 | B10 | LPG gas rate | Create/update gas/kg rate with effective date | Current/effective rate is used by POS and history retains old/new values | | | NOT EXECUTED |
 | B11 | Cylinder price rate | Set cylinder price for SQA cylinder | POS resolves correct cylinder price for types 3, 4 and 5 | | | NOT EXECUTED |

@@ -47,21 +47,14 @@ database.default.port = 3306
 encryption.key =
 "@ | Set-Content -Encoding ascii (Join-Path $app '.env.example')
 
-Step 'Installing production vendor (composer --no-dev)'
-$composer = Get-Command composer -ErrorAction SilentlyContinue
-if ($composer) {
-    Push-Location $app
-    try {
-        & composer install --no-dev --optimize-autoloader --no-interaction --no-progress --no-scripts
-        if ($LASTEXITCODE -ne 0) { throw 'composer install failed' }
-    } finally { Pop-Location }
-} elseif (Test-Path (Join-Path $root 'vendor')) {
-    Write-Warning 'Composer not found on PATH: copying the local vendor folder (may include dev packages).'
-    Copy-Dir (Join-Path $root 'vendor') (Join-Path $app 'vendor')
-} else { throw 'Composer not found and no vendor folder exists. Install Composer (and PHP) first.' }
+Step 'Copying vendor folder (no PHP or Composer needed)'
+if (-not (Test-Path (Join-Path $root 'vendor\autoload.php'))) { throw 'vendor folder is missing. Copy it from a working install first.' }
+Copy-Dir (Join-Path $root 'vendor') (Join-Path $app 'vendor')
 
 Step 'Preparing public_html'
 Copy-Dir (Join-Path $root 'public') $web
+# cPanel .htaccess: https + no-www redirect, LiteSpeed cache off, PHP 8.5 handler
+Copy-Item (Join-Path $PSScriptRoot 'cpanel.htaccess') (Join-Path $web '.htaccess') -Force
 $index = Join-Path $web 'index.php'
 $text  = [IO.File]::ReadAllText($index)
 $new   = $text.Replace("FCPATH . '../app/Config/Paths.php'", "FCPATH . '../perfect-lpg/app/Config/Paths.php'")
@@ -92,7 +85,7 @@ See docs/cpanel-deployment.md for details.
 Step 'Creating zip'
 if (Test-Path $zip) { Remove-Item $zip -Force }
 # tar.exe writes forward-slash paths, which cPanel extracts correctly
-& tar.exe -a -c -f $zip -C $work perfect-lpg public_html README-DEPLOY.txt
+& (Join-Path $env:SystemRoot 'System32\tar.exe') -a -c -f $zip -C $work perfect-lpg public_html README-DEPLOY.txt
 if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
 Remove-Item $work -Recurse -Force
 

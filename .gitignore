@@ -38,3 +38,6 @@ php_errors.log
 /writable/playwright-report/
 /writable/playwright-results/
 /test-results/
+
+# cPanel build output
+/dist/

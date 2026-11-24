@@ -17,7 +17,7 @@ class Purchases extends Controller
         if (!\App\Services\PermissionService::allows('PURCHASE_MANAGE')) {
             return $this->response->setStatusCode(403)->setBody('Forbidden');
         }
-        if (!BranchContext::isHeadOffice()) {
+        if (!BranchContext::canPurchase()) {
             $ho = BranchContext::find(BranchContext::headOfficeId());
             $message = 'Purchases are entered at the Head Office' . ($ho ? ' (' . $ho['name'] . ')' : '') . '. Switch to the Head Office branch to purchase stock for any branch.';
             if ($this->request->isAJAX()) {
@@ -121,7 +121,12 @@ class Purchases extends Controller
         }
 
         // Empty cylinders on hand per branch and cylinder type: a refill line uses the receiving branch's empties.
+        // Split purchasing: a branch buys only its own stock.
+        $split = BranchContext::purchaseMode() === 'split';
         $branches = BranchContext::allActive();
+        if ($split) {
+            $branches = array_values(array_filter($branches, static fn($b) => (int) $b['id'] === BranchContext::currentId()));
+        }
         $emptyStock = [];
         $emptyRows = $db->table('cylinder_units')
             ->select('location_id, cylinder_type_id, COUNT(*) AS total')
@@ -147,7 +152,7 @@ class Purchases extends Controller
             'canVoidPurchases' => $canVoidPurchases,
             'emptyStock'       => $emptyStock,
             'branches'         => $branches,
-            'headOfficeId'     => BranchContext::headOfficeId(),
+            'headOfficeId'     => $split ? BranchContext::currentId() : BranchContext::headOfficeId(),
             'types'            => $db->table('cylinder_types')
                 ->where('is_active', 1)
                 ->orderBy('sort_order')

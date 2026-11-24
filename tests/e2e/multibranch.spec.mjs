@@ -323,3 +323,87 @@ test('MB-07 removing branch access sends the user back to the picker', async ({ 
   await expect(user.locator('.topbar')).toContainText(hoName);
   await expect(user.locator('.topbar')).not.toContainText(B2.name);
 });
+
+async function setPurchaseMode(page, mode) {
+  await page.goto('shop-settings', { waitUntil: 'load' });
+  await page.locator('button[data-bs-target="#security"]').click();
+  await page.locator(mode === 'split' ? '#pmSplit' : '#pmCentral').check();
+  await page.locator('button.btn-primary', { hasText: 'Save Shop Settings' }).click();
+  await page.waitForLoadState('load');
+}
+
+test('MB-24 split purchasing: a branch buys and pays its own stock, central blocked while it owes', async ({ page }) => {
+  test.setTimeout(240_000);
+  await login(page, 'admin', 'admin123');
+  await page.locator('[data-testid="branch-card-MAIN"]').click();
+  await page.waitForLoadState('load');
+  await setPurchaseMode(page, 'split');
+  expect(await alertText(page)).not.toContain('Cannot');
+
+  await switchBranch(page, B2.name);
+  await expect(page.locator('#sidebar')).toContainText('Supplier Payments');
+  await page.goto('purchases', { waitUntil: 'load' });
+  await expect(page).toHaveURL(/purchases/);
+  // Receive at offers only this branch.
+  await page.locator('#supplier_id').selectOption({ label: 'MB Supplier' });
+  const row = page.locator('#lines tr.line').first();
+  await expect(row.locator('.dest option')).toHaveCount(1);
+  await expect(row.locator('.dest option')).toHaveText([B2.name]);
+  await row.locator('.type').selectOption('filled_cylinder');
+  await row.locator('.cyl').selectOption({ index: 1 });
+  await row.locator('.qty').fill('2');
+  await row.locator('.rate').fill('3000');
+  await page.locator('#postPurchase').click();
+  await page.waitForLoadState('load');
+  expect(await alertText(page)).toContain('posted');
+
+  // B2 owes only its own purchase (2 x 3000), not the Head Office balance.
+  await page.goto('supplier-payments', { waitUntil: 'load' });
+  await page.locator('#supplier_id').selectOption({ label: 'MB Supplier' });
+  await expect(page.locator('#outstanding')).toContainText('6,000.00');
+
+  // Back to central is refused while B2 owes.
+  await switchBranch(page, hoName);
+  await setPurchaseMode(page, 'central');
+  expect(await alertText(page)).toContain('Branch Two');
+
+  // B2 pays its balance, then central is accepted.
+  await switchBranch(page, B2.name);
+  await page.goto('supplier-payments', { waitUntil: 'load' });
+  await page.locator('#supplier_id').selectOption({ label: 'MB Supplier' });
+  await page.locator('#amount').fill('6000');
+  await page.locator('#payment_mode').selectOption('online');
+  await page.locator('#payButton').click();
+  await page.waitForLoadState('load');
+  expect(await alertText(page)).toContain('posted');
+
+  await switchBranch(page, hoName);
+  await setPurchaseMode(page, 'central');
+  expect(await alertText(page)).not.toContain('Cannot');
+  await switchBranch(page, B2.name);
+  await expect(page.locator('#sidebar')).not.toContainText('Supplier Payments');
+});
+
+
+test('MB-25 cylinder types may share a capacity, codes stay unique', async ({ page }) => {
+  await login(page, 'admin', 'admin123');
+  await page.locator('[data-testid="branch-card-MAIN"]').click();
+  await page.waitForLoadState('load');
+  const addType = async (code, name, cap) => {
+    await page.goto('cylinder-types', { waitUntil: 'load' });
+    await page.locator('[data-bs-target="#form"]').first().click();
+    const f = page.locator('#form');
+    await f.locator('input[name="code"]').fill(code);
+    await f.locator('input[name="name"]').fill(name);
+    await f.locator('input[name="capacity_kg"]').fill(cap);
+    await f.locator('input[name="empty_cylinder_price"]').fill('0');
+    await f.locator('input[name="sort_order"]').fill('9');
+    await f.locator('button.btn-primary').click();
+    await page.waitForLoadState('load');
+    return alertText(page);
+  };
+  // 11.8 kg already exists as C11_8: a second 11.8 kg type with a new code is accepted.
+  expect(await addType('C11_8B', '11.8 kg Brand B', '11.8')).toContain('Cylinder type created');
+  // The same code again is refused with a clear message.
+  expect(await addType('C11_8B', 'Duplicate', '15')).toContain('already used');
+});

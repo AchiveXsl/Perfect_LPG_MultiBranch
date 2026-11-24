@@ -68,6 +68,28 @@ class BranchContext
         return $locationId > 0 && $locationId === self::headOfficeId();
     }
 
+    /**
+     * Company purchasing mode, kept in the Head Office shop settings.
+     * central: the Head Office purchases for every branch and owns the supplier payables.
+     * split:   every branch purchases only its own stock and owes and pays its own suppliers.
+     */
+    public static function purchaseMode(): string
+    {
+        try {
+            $row = Database::connect()->table('shop_settings')->select('purchase_mode')
+                ->where('location_id', self::headOfficeId())->get()->getRowArray();
+        } catch (\Throwable $e) {
+            return 'central'; // column not migrated yet
+        }
+        return ($row['purchase_mode'] ?? 'central') === 'split' ? 'split' : 'central';
+    }
+
+    /** Can this branch enter purchases and supplier payments? */
+    public static function canPurchase(?int $locationId = null): bool
+    {
+        return self::purchaseMode() === 'split' || self::isHeadOffice($locationId);
+    }
+
     /** Active branches, Head Office first. */
     public static function allActive(): array
     {

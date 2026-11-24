@@ -16,6 +16,7 @@ class PurchaseService{
   foreach((array)$lines as $i=>$l){
    $dest=(int)($l['receive_location_id']??0) ?: $locationId;
    if(!in_array($dest,$activeBranches,true)) throw new RuntimeException('Purchase line '.($i+1).': select an active branch to receive the stock.');
+   if($dest!==$locationId && BranchContext::purchaseMode()==='split') throw new RuntimeException('Purchase line '.($i+1).': in split purchasing each branch buys only its own stock.');
    $receiveAt[$i]=$dest;
   }
   foreach(array_unique(array_merge([$locationId],array_values($receiveAt))) as $loc) (new CostService())->ensureReady((int)$loc);
@@ -106,15 +107,22 @@ class PurchaseService{
  {
   // credit_amount is already the unpaid portion of each posted purchase,
   // so purchase payments must NOT be subtracted again here.
-  $s=$this->db->table('purchases')->selectSum('credit_amount','credit')
-   ->where('supplier_id',$supplierId)->where('status','posted')->get()->getRowArray();
+  // Each branch owes its own suppliers ($locationId). null = all branches combined.
+  // The supplier opening balance belongs to the Head Office account.
+  $q=$this->db->table('purchases')->selectSum('credit_amount','credit')
+   ->where('supplier_id',$supplierId)->where('status','posted');
+  if($locationId) $q->where('location_id',$locationId);
+  $s=$q->get()->getRowArray();
 
   // These are only payments made against an older supplier payable.
-  $ap=$this->db->table('supplier_payments')->selectSum('amount','account_paid')
-   ->where('supplier_id',$supplierId)->where('status','posted')->get()->getRowArray();
+  $q=$this->db->table('supplier_payments')->selectSum('amount','account_paid')
+   ->where('supplier_id',$supplierId)->where('status','posted');
+  if($locationId) $q->where('location_id',$locationId);
+  $ap=$q->get()->getRowArray();
 
   $supplier=$this->db->table('suppliers')->where('id',$supplierId)->get()->getRowArray();
-  return (float)($supplier['opening_balance']??0)
+  $opening=(!$locationId || BranchContext::isHeadOffice($locationId))?(float)($supplier['opening_balance']??0):0.0;
+  return $opening
       +(float)($s['credit']??0)
       -(float)($ap['account_paid']??0);
  }

@@ -246,6 +246,15 @@
 
             <div class="tab-pane fade" id="security">
                 <div class="row g-3">
+                    <?php if (\App\Services\BranchContext::isHeadOffice((int) ($location['id'] ?? 0))): ?>
+                    <div class="col-12">
+                        <label class="form-label fw-semibold">Purchasing Mode (all branches)</label>
+                        <?php $pm = ($settings['purchase_mode'] ?? 'central') === 'split' ? 'split' : 'central'; ?>
+                        <div class="form-check mt-1"><input class="form-check-input" type="radio" name="purchase_mode" id="pmCentral" value="central" <?= $pm === 'central' ? 'checked' : '' ?>><label class="form-check-label" for="pmCentral"><strong>Central</strong> — the Head Office purchases stock for all branches and pays the suppliers.</label></div>
+                        <div class="form-check"><input class="form-check-input" type="radio" name="purchase_mode" id="pmSplit" value="split" <?= $pm === 'split' ? 'checked' : '' ?>><label class="form-check-label" for="pmSplit"><strong>Each branch buys its own stock</strong> — every branch purchases only for itself, owes and pays its own supplier balances.</label></div>
+                        <div class="form-text">Switching back to Central is blocked while any other branch still owes a supplier.</div>
+                    </div>
+                    <?php endif; ?>
                     <div class="col-12">
                         <label class="form-label fw-semibold">Purchase Void</label>
                         <div class="form-check form-switch mt-2">

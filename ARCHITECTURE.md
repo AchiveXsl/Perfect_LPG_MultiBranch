@@ -195,7 +195,11 @@ Migration 044. One database serves every branch; each transaction row carries it
 
 ### Head Office
 - Exactly one branch has `locations.is_head_office = 1`. Existing data belongs to it.
-- Purchasing is central: Purchases and Supplier Payments open only at the Head Office. The supplier payable is one account (`PurchaseService::supplierBalance` ignores branch).
+- Purchasing mode (`shop_settings.purchase_mode` of the Head Office row, migration 046, `BranchContext::purchaseMode()` / `canPurchase()`):
+  - `central` (default): Purchases and Supplier Payments open only at the Head Office, which buys for every branch and owns the supplier payables.
+  - `split`: every branch opens Purchases and Supplier Payments for itself only. Receive at is locked to the branch, it owes and pays its own supplier balance from its own cash and voids its own purchases. The Head Office has no special purchasing role.
+  - `PurchaseService::supplierBalance($supplier, $location)` is per branch (null = all branches). The supplier opening balance belongs to the Head Office account. Purchases and payments from before a switch stay with the branch that entered them.
+  - Switching from `split` back to `central` is refused while any other branch still owes a supplier.
 - Each purchase line has `receive_location_id`: that branch's stock receives the cylinders and its cost layers hold their cost. A refill line uses the receiving branch's empties.
 
 ### Customers
