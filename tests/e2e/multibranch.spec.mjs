@@ -458,9 +458,10 @@ async function openCash(page) {
 }
 async function openLatestPurchase(page) {
   await page.goto('purchases?tab=history', { waitUntil: 'load' });
-  // A receipt popup (shown after posting) may cover the page: close it first.
-  const popupClose = page.locator('.modal.show button', { hasText: 'Close' });
-  if (await popupClose.count()) { await popupClose.first().click(); await expect(page.locator('.modal.show')).toHaveCount(0); }
+  // The test posts its sale in the background, so that sale's receipt popup (normally shown and cleared by the
+  // POS reload) opens on the next page, which is this one. Close it first.
+  const overlay = page.locator('#purchaseReceiptOverlay.is-visible');
+  if (await overlay.count()) { await page.locator('#purchaseReceiptClose').click(); await expect(overlay).toHaveCount(0); }
   const btn = page.locator('[data-bs-target^="#purchaseDetailModal"]').first();
   const target = await btn.getAttribute('data-bs-target');
   await btn.click();

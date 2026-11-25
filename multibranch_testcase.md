@@ -47,7 +47,7 @@ Record PASS / FAIL and the exact error in the Status column.
 | MB-29 | Customers | Customer ledger page and Reports → Customer Ledger → Export PDF | PDF page opens with the customer and opening balance | PASS |
 | MB-30 | Loans | Lender with 1,000 opening; receive 50,000; repay 20,000; repay 40,000; void repayment | Owed 31,000; over-repayment refused; after void 51,000 | PASS |
 | MB-31 | Expenses | Post expense; filter Jan 2020; Export PDF | Shown in current month; none in 2020; PDF opens | PASS |
-| MB-32 | Transfers | Days back = 2; dispatch dated 5 days ago, tomorrow, now; filter Jan 2020; receive dated before dispatch, then now | Refused (Shop Settings), refused (future), dispatched; in-transit row still listed; receive refused, then received; received row hidden in 2020 filter | |
+| MB-32 | Transfers | Days back = 2; dispatch dated 5 days ago, tomorrow, now; filter Jan 2020; receive dated before dispatch, then now | Refused (Shop Settings), refused (future), dispatched; in-transit row still listed; receive refused, then received; received row hidden in 2020 filter | PASS |
 
 ## Progress
 
@@ -59,6 +59,7 @@ Automated: `tests/e2e/multibranch.spec.mjs` (run on a fresh database: schema.sql
 | 2026-11-19 | PHP 8.5.12 + Apache 2.4.71 + MySQL 8.4.13 (same lines as the installer), fresh DB | 14 / 14 passed: MB-00, setup, MB-01–08, MB-12, MB-13, MB-16–18, MB-20, MB-22 |
 | 2026-11-24 | Same environment, fresh DB with migrations 046 and 047 | 16 / 16 passed: previous 14 plus MB-24 (split purchasing) and MB-25 (same-capacity cylinder types). MB-24 and MB-25 run last because they change stock and types |
 | 2026-11-25 | Same environment, fresh DB with migrations 046 to 050 | 22 / 22 passed: previous 16 plus MB-26 (split makes customers branch-only), MB-27 (purchase rate edit), MB-28 (sale history cylinders), MB-29 (customer ledger PDF), MB-30 (loans), MB-31 (expense filter / PDF) |
+| 2026-11-25 | Same environment, fresh DB with migrations up to 051 | 23 / 23 passed (27 min): previous 22 plus MB-32 (transfer dates). MB-27 closes the sale receipt popup that the background test sale leaves for the next page |
 
 Not automated yet (test by hand): MB-09, MB-10, MB-11 (credit through POS), MB-14, MB-15, MB-19, MB-21 opening-balance detail, MB-23.
 Bug found and fixed by this run: customer list and Customer Receipts crashed with `Class "AppModelsCustomerModel" not found` (namespace backslashes lost in an edit).
