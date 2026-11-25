@@ -213,6 +213,8 @@ class ShopSettings extends Controller
                 'pos_price_list_switch' => $priceListSwitch,
                 'cost_method' => $costMethod,
                 ...($purchaseMode !== null ? ['purchase_mode' => $purchaseMode] : []),
+                // Blank = back to the start of the current month.
+                'transfer_backdate_days' => trim((string) $this->request->getPost('transfer_backdate_days')) === '' ? null : max(0, min(3650, (int) $this->request->getPost('transfer_backdate_days'))),
                 'purchase_void_enabled' => $purchaseVoidEnabled,
                 'backup_enabled' => $this->request->getPost('backup_enabled') ? 1 : 0,
                 'db_backup_url' => trim((string) $this->request->getPost('db_backup_url')) ?: null,

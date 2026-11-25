@@ -25,9 +25,16 @@ class StockTransfers extends Controller
     {
         if ($r = $this->guard()) return $r;
         $loc = BranchContext::currentId();
-        $rows = (new StockTransferService())->listFor($loc);
+        // Date filter on the dispatch date, default the current month. In-transit transfers always show.
+        $valid = static fn($v) => is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $v) && strtotime($v) !== false;
+        $from = $valid($this->request->getGet('from')) ? $this->request->getGet('from') : date('Y-m-01');
+        $to = $valid($this->request->getGet('to')) ? $this->request->getGet('to') : date('Y-m-d');
+        if ($from > $to) [$from, $to] = [$to, $from];
+        $rows = (new StockTransferService())->listFor($loc, 2000, $from, $to);
         return view('stock_transfers/index', [
             'title' => 'Stock Transfers',
+            'from' => $from,
+            'to' => $to,
             'rows' => $rows,
             'currentId' => $loc,
             'incoming' => array_values(array_filter($rows, static fn($t) => $t['status'] === 'in_transit' && (int) $t['to_location_id'] === $loc)),
@@ -56,6 +63,7 @@ class StockTransfers extends Controller
             'unitsByType' => $byType,
             'destinations' => $destinations,
             'from' => BranchContext::current(),
+            'earliestDate' => (new StockTransferService())->earliestDate($loc),
         ]);
     }
 
@@ -73,7 +81,8 @@ class StockTransfers extends Controller
                 $byType,
                 (array) $this->request->getPost('unit_ids'),
                 (string) $this->request->getPost('notes'),
-                (int) session()->get('user_id')
+                (int) session()->get('user_id'),
+                (string) $this->request->getPost('transfer_date')
             );
             return redirect()->to('/stock-transfers/' . $x['id'])->with('success', 'Transfer ' . $x['transfer_no'] . ' dispatched: ' . $x['filled'] . ' filled and ' . $x['empty'] . ' empty cylinder(s), ' . number_format($x['gas_kg'], 3) . ' KG gas. The receiving branch must confirm it.');
         } catch (\Throwable $e) {
@@ -93,6 +102,7 @@ class StockTransfers extends Controller
             'title' => 'Stock Transfer ' . $t['transfer_no'],
             't' => $t,
             'canReceive' => $t['status'] === 'in_transit' && (int) $t['to_location_id'] === $loc,
+            'earliestDate' => (new StockTransferService())->earliestDate($loc),
             'canCancel' => $t['status'] === 'in_transit' && (int) $t['from_location_id'] === $loc,
         ]);
     }
@@ -106,7 +116,8 @@ class StockTransfers extends Controller
                 BranchContext::currentId(),
                 (array) $this->request->getPost('lines'),
                 (string) $this->request->getPost('receive_notes'),
-                (int) session()->get('user_id')
+                (int) session()->get('user_id'),
+                (string) $this->request->getPost('receive_date')
             );
             $msg = 'Transfer ' . $x['transfer_no'] . ' received: ' . $x['received'] . ' cylinder(s) added to stock.';
             if ($x['missing'] > 0) $msg .= ' ' . $x['missing'] . ' cylinder(s) marked missing went back to the sending branch.';

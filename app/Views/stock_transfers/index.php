@@ -23,6 +23,15 @@ $badge = static fn(string $s): string => [
 <?php endif; ?>
 
 <div class="card shadow-sm">
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-end gap-2">
+        <strong>Transfers</strong>
+        <form method="get" action="<?= site_url('stock-transfers') ?>" class="d-flex flex-wrap align-items-end gap-2" id="transferFilter">
+            <div><label class="form-label small mb-0">From</label><input type="date" name="from" id="trFrom" class="form-control form-control-sm" value="<?= esc($from) ?>"></div>
+            <div><label class="form-label small mb-0">To</label><input type="date" name="to" id="trTo" class="form-control form-control-sm" value="<?= esc($to) ?>"></div>
+            <button class="btn btn-sm btn-primary"><i class="bi bi-funnel me-1"></i>Filter</button>
+        </form>
+        <div class="w-100 small text-muted">By dispatch date. Transfers still in transit always show.</div>
+    </div>
     <div class="card-body table-responsive">
         <table class="table table-hover align-middle mb-0">
             <thead><tr><th>Transfer No.</th><th>Dispatched</th><th>Direction</th><th>From → To</th><th class="text-end">Filled</th><th class="text-end">Empty</th><th class="text-end">Gas KG</th><th>Status</th><th></th></tr></thead>

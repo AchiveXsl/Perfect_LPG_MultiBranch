@@ -47,6 +47,7 @@ Record PASS / FAIL and the exact error in the Status column.
 | MB-29 | Customers | Customer ledger page and Reports → Customer Ledger → Export PDF | PDF page opens with the customer and opening balance | PASS |
 | MB-30 | Loans | Lender with 1,000 opening; receive 50,000; repay 20,000; repay 40,000; void repayment | Owed 31,000; over-repayment refused; after void 51,000 | PASS |
 | MB-31 | Expenses | Post expense; filter Jan 2020; Export PDF | Shown in current month; none in 2020; PDF opens | PASS |
+| MB-32 | Transfers | Days back = 2; dispatch dated 5 days ago, tomorrow, now; filter Jan 2020; receive dated before dispatch, then now | Refused (Shop Settings), refused (future), dispatched; in-transit row still listed; receive refused, then received; received row hidden in 2020 filter | |
 
 ## Progress
 

@@ -24,7 +24,12 @@
                     <?php endforeach; ?>
                 </select>
             </div>
-            <div class="col-md-7">
+            <div class="col-md-3">
+                <label class="form-label">Transfer date</label>
+                <input type="datetime-local" name="transfer_date" id="transferDate" class="form-control" min="<?= esc($earliestDate) ?>T00:00" max="<?= date('Y-m-d\TH:i') ?>" value="<?= esc(old('transfer_date') ?? date('Y-m-d\TH:i')) ?>">
+                <div class="form-text">From <?= esc(date('d M Y', strtotime($earliestDate))) ?> to now (Shop Settings).</div>
+            </div>
+            <div class="col-md-4">
                 <label class="form-label">Notes</label>
                 <input name="notes" class="form-control" maxlength="500" placeholder="Vehicle, driver, reason…" value="<?= esc(old('notes') ?? '') ?>">
             </div>
