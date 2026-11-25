@@ -222,10 +222,40 @@ class Purchases extends Controller
                 'success',
                 'Purchase ' . $x['purchase_no'] . ' posted. Balance payable: Rs. ' .
                     number_format((float) $x['balance_payable'], 2)
-            );
+            )->with('receipt_url', site_url('purchases/receipt/' . (int) $x['id']));
         } catch (\Throwable $e) {
             return redirect()->back()->withInput()->with('error', $e->getMessage());
         }
+    }
+
+    public function receipt(int $id)
+    {
+        if ($r = $this->guard()) {
+            return $r;
+        }
+
+        $db = Database::connect();
+        $locationId = (int) session()->get('location_id');
+        $purchase = $db->table('purchases p')
+            ->select('p.*, s.name AS supplier_name, s.phone AS supplier_phone, sp.name AS plant_name, u.full_name AS created_by_name')
+            ->join('suppliers s', 's.id = p.supplier_id')
+            ->join('supplier_plants sp', 'sp.id = p.plant_id', 'left')
+            ->join('users u', 'u.id = p.created_by', 'left')
+            ->where('p.id', $id)->where('p.location_id', $locationId)
+            ->get()->getRowArray();
+        if (!$purchase) {
+            return $this->response->setStatusCode(404)->setBody('Purchase not found');
+        }
+        $items = $db->table('purchase_items pi')
+            ->select('pi.*, ct.code AS cylinder_code, ct.capacity_kg, rl.name AS receive_location_name')
+            ->join('cylinder_types ct', 'ct.id = pi.cylinder_type_id', 'left')
+            ->join('locations rl', 'rl.id = pi.receive_location_id', 'left')
+            ->where('pi.purchase_id', $id)->orderBy('pi.line_no')->get()->getResultArray();
+        $payments = $db->table('purchase_payments')->where('purchase_id', $id)->orderBy('id')->get()->getResultArray();
+        $location = $db->table('locations')->where('id', $locationId)->get()->getRowArray() ?: [];
+        $supplierBalance = round((new PurchaseService())->supplierBalance((int) $purchase['supplier_id'], $locationId), 2);
+
+        return view('purchases/receipt', compact('purchase', 'items', 'payments', 'location', 'supplierBalance'));
     }
 
     public function void(int $id)
