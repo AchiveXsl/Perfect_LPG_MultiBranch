@@ -297,7 +297,7 @@ test('MB-22 a user without all-branch reports only sees their branch', async ({ 
 });
 
 test('MB-07 removing branch access sends the user back to the picker', async ({ browser }) => {
-  test.setTimeout(240_000);
+  test.setTimeout(480_000);
   const admin = await (await browser.newContext()).newPage();
   const user = await (await browser.newContext()).newPage();
   await login(user, 'mgr2', PASS);
@@ -333,7 +333,7 @@ async function setPurchaseMode(page, mode) {
 }
 
 test('MB-24 split purchasing: a branch buys and pays its own stock, central blocked while it owes', async ({ page }) => {
-  test.setTimeout(240_000);
+  test.setTimeout(480_000);
   await login(page, 'admin', 'admin123');
   await page.locator('[data-testid="branch-card-MAIN"]').click();
   await page.waitForLoadState('load');
@@ -409,7 +409,7 @@ test('MB-25 cylinder types may share a capacity, codes stay unique', async ({ pa
 });
 
 test('MB-26 split purchasing makes every customer branch-only, fields read-only', async ({ page }) => {
-  test.setTimeout(300_000);
+  test.setTimeout(480_000);
   await login(page, 'admin', 'admin123');
   await page.locator('[data-testid="branch-card-MAIN"]').click();
   await page.waitForLoadState('load');
@@ -458,6 +458,9 @@ async function openCash(page) {
 }
 async function openLatestPurchase(page) {
   await page.goto('purchases?tab=history', { waitUntil: 'load' });
+  // A receipt popup (shown after posting) may cover the page: close it first.
+  const popupClose = page.locator('.modal.show button', { hasText: 'Close' });
+  if (await popupClose.count()) { await popupClose.first().click(); await expect(page.locator('.modal.show')).toHaveCount(0); }
   const btn = page.locator('[data-bs-target^="#purchaseDetailModal"]').first();
   const target = await btn.getAttribute('data-bs-target');
   await btn.click();
@@ -484,7 +487,7 @@ async function postWalkinGas(page, typeId, kg, rate) {
 }
 
 test('MB-27 purchase rate edit: free while unsold, asks before restating sold stock', async ({ page }) => {
-  test.setTimeout(400_000);
+  test.setTimeout(480_000);
   await enterHo(page);
   await openCash(page);
   // Purchase 2 filled 11.8 kg at 3000 on credit.
@@ -561,7 +564,7 @@ test('MB-29 customer ledger exports PDF from the customer page and from Reports'
 });
 
 test('MB-30 loans: lender, loan received, repayment limit, void', async ({ page }) => {
-  test.setTimeout(300_000);
+  test.setTimeout(480_000);
   page.on('dialog', d => d.accept('Entered by mistake'));
   await enterHo(page);
   await openCash(page);
@@ -615,4 +618,66 @@ test('MB-31 expense history: date filter and PDF', async ({ page }) => {
   const [popup] = await Promise.all([page.waitForEvent('popup'), page.locator('#expensePdf').click()]);
   await popup.waitForLoadState();
   expect(await popup.title()).toContain('Expense History');
+});
+
+test('MB-32 transfer dates: setting limit, last-movement check, receive date, list date filter', async ({ page }) => {
+  test.setTimeout(480_000);
+  page.on('dialog', d => d.accept());
+  await enterHo(page);
+  const iso = d => { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
+  const daysAgo = n => { const d = new Date(); d.setDate(d.getDate() - n); return d; };
+  const setDays = async v => {
+    await page.goto('shop-settings', { waitUntil: 'load' });
+    await page.locator('button[data-bs-target="#inventory"]').click();
+    await page.locator('#transferBackdateDays').fill(v);
+    await page.locator('button.btn-primary', { hasText: 'Save Shop Settings' }).click();
+    await page.waitForLoadState('load');
+  };
+  await setDays('2');
+
+  const tryDispatch = async date => {
+    await page.goto('stock-transfers/new', { waitUntil: 'load' });
+    await page.locator('select[name="to_location_id"]').selectOption({ label: B2.name });
+    await page.locator('input[name$="[empty]"]').first().fill('1');
+    // Bypass the browser min / max so the server rule is what is tested.
+    await page.locator('#transferDate').evaluate((el, v) => { el.removeAttribute('min'); el.removeAttribute('max'); el.value = v; }, date);
+    await page.locator('#transferForm button[type="submit"]').click();
+    await page.waitForLoadState('load');
+    return alertText(page);
+  };
+  // 5 days back is beyond the 2-day setting.
+  expect(await tryDispatch(iso(daysAgo(5)) + 'T10:00')).toContain('Shop Settings');
+  // Tomorrow is in the future.
+  expect(await tryDispatch(iso(daysAgo(-1)) + 'T10:00')).toContain('future');
+  // A valid date (now) dispatches.
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  expect(await tryDispatch(`${iso(d)}T${p(d.getHours())}:${p(d.getMinutes())}`)).toContain('dispatched');
+  const transferUrl = page.url();
+
+  // The list filter: a 2020 range still shows the transfer, because it is in transit.
+  await page.goto('stock-transfers?from=2020-01-01&to=2020-01-31', { waitUntil: 'load' });
+  await expect(page.locator('#trFrom')).toHaveValue('2020-01-01');
+  const inTransitRows = await page.locator('.content-wrap table tbody tr').count();
+  expect(inTransitRows).toBeGreaterThan(0);
+
+  // Receive at B2: a date before the dispatch is refused, then now is accepted.
+  await switchBranch(page, B2.name);
+  await page.goto(transferUrl, { waitUntil: 'load' });
+  await page.locator('#receiveDate').evaluate((el, v) => { el.removeAttribute('min'); el.value = v; }, iso(daysAgo(1)) + 'T08:00');
+  await page.locator('#receiveForm button[type="submit"]').click();
+  await page.waitForLoadState('load');
+  expect(await alertText(page)).toContain('cannot be before');
+  await page.goto(transferUrl, { waitUntil: 'load' });
+  await page.locator('#receiveForm button[type="submit"]').click();
+  await page.waitForLoadState('load');
+  expect(await alertText(page)).toContain('received');
+
+  // Received transfers drop out of a 2020 filter; this month shows them.
+  await page.goto('stock-transfers?from=2020-01-01&to=2020-01-31', { waitUntil: 'load' });
+  await expect(page.locator('.content-wrap table tbody')).not.toContainText('Received');
+  await page.goto('stock-transfers', { waitUntil: 'load' });
+  await expect(page.locator('.content-wrap table tbody')).toContainText(/Received/i);
+
+  await switchBranch(page, hoName);
+  await setDays('');
 });

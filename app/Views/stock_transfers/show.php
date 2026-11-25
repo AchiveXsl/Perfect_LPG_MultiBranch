@@ -64,7 +64,9 @@ $fmtAt = static fn(?string $at): string => $at ? date('d M Y H:i', strtotime($at
     </div>
     <?php if ($canReceive): ?>
     <div class="card shadow-sm mb-3"><div class="card-body row g-2 align-items-end">
-        <div class="col-md-8"><label class="form-label">Receiving notes</label><input name="receive_notes" class="form-control" maxlength="500"></div>
+        <?php $minReceive = max($earliestDate . 'T00:00', date('Y-m-d\TH:i', strtotime($t['dispatched_at']))); ?>
+        <div class="col-md-3"><label class="form-label">Receive date</label><input type="datetime-local" name="receive_date" id="receiveDate" class="form-control" min="<?= esc($minReceive) ?>" max="<?= date('Y-m-d\TH:i') ?>" value="<?= date('Y-m-d\TH:i') ?>"><div class="form-text">Not before dispatch or <?= esc(date('d M Y', strtotime($earliestDate))) ?>.</div></div>
+        <div class="col-md-5"><label class="form-label">Receiving notes</label><input name="receive_notes" class="form-control" maxlength="500"></div>
         <div class="col-md-4 text-end"><button class="btn btn-success" type="submit"><i class="bi bi-box-arrow-in-down me-1"></i>Confirm Receipt</button></div>
     </div></div>
     <?php endif; ?>

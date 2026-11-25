@@ -193,6 +193,11 @@
             <div class="tab-pane fade" id="inventory">
                 <div class="row g-3">
                     <div class="col-md-6">
+                        <label class="form-label" for="transferBackdateDays">Stock Transfer: Days Back Allowed</label>
+                        <input type="number" min="0" max="3650" step="1" class="form-control" name="transfer_backdate_days" id="transferBackdateDays" placeholder="Blank = from the start of this month" value="<?= esc(($settings['transfer_backdate_days'] ?? null) === null ? '' : (string) (int) $settings['transfer_backdate_days']) ?>">
+                        <div class="form-text">How far back a transfer dispatch or receipt may be dated at this branch. Blank: back to the 1st of the current month. 0: today only.</div>
+                    </div>
+                    <div class="col-md-6">
                         <label class="form-label">Stock Validation at Sale</label>
                         <div class="form-check form-switch mt-2">
                             <input class="form-check-input" type="checkbox" name="stock_validation_enabled" id="stockValidation" <?= !empty($settings['stock_validation_enabled']) ? 'checked' : '' ?>>

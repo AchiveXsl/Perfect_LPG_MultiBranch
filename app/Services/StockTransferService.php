@@ -35,7 +35,42 @@ class StockTransferService
      * @param array<int,array{filled?:int,empty?:int}> $byType cylinder type id => how many filled / empty to send
      * @param int[] $unitIds specific filled or empty cylinders to send (used in addition to $byType)
      */
-    public function dispatch(int $fromId, int $toId, array $byType, array $unitIds, string $notes, int $userId): array
+    /**
+     * Earliest date a branch may give a transfer (Shop Settings transfer_backdate_days; blank = start of this month).
+     */
+    public function earliestDate(int $locationId): string
+    {
+        $days = null;
+        try {
+            $row = $this->db->table('shop_settings')->select('transfer_backdate_days')->where('location_id', $locationId)->get()->getRowArray();
+            if ($row && $row['transfer_backdate_days'] !== null && $row['transfer_backdate_days'] !== '') $days = max(0, (int) $row['transfer_backdate_days']);
+        } catch (\Throwable $e) {
+            // column not migrated yet
+        }
+        return $days === null ? date('Y-m-01') : date('Y-m-d', strtotime('-' . $days . ' days'));
+    }
+
+    /**
+     * The date and time a transfer step is recorded at: now when blank, otherwise the entered date (and time),
+     * never in the future, never before the branch's earliest allowed date and never before $notBefore.
+     */
+    public function resolveDate(?string $input, int $locationId, ?string $notBefore = null): string
+    {
+        $input = trim((string) $input);
+        $now = date('Y-m-d H:i:s');
+        if ($input === '') return $now;
+        $ts = strtotime(str_replace('T', ' ', $input));
+        if ($ts === false) throw new RuntimeException('Invalid transfer date.');
+        $at = date('Y-m-d H:i:s', $ts);
+        if (date('Y-m-d', $ts) === date('Y-m-d') && $at > $now) $at = $now; // today's date with a later clock time: now
+        if ($at > $now) throw new RuntimeException('The transfer date cannot be in the future.');
+        $earliest = $this->earliestDate($locationId);
+        if ($at < $earliest . ' 00:00:00') throw new RuntimeException('The transfer date cannot be before ' . date('d M Y', strtotime($earliest)) . ' (Shop Settings).');
+        if ($notBefore !== null && $at < $notBefore) throw new RuntimeException('The date cannot be before ' . date('d M Y H:i', strtotime($notBefore)) . '.');
+        return $at;
+    }
+
+    public function dispatch(int $fromId, int $toId, array $byType, array $unitIds, string $notes, int $userId, ?string $date = null): array
     {
         if ($fromId <= 0 || $toId <= 0) throw new RuntimeException('Select the receiving branch.');
         if ($fromId === $toId) throw new RuntimeException('The receiving branch must be different from this branch.');
@@ -83,7 +118,10 @@ class StockTransferService
             if (!$units) throw new RuntimeException('Choose at least one cylinder to send.');
 
             $no = 'TR' . date('YmdHis') . '-' . random_int(100, 999);
-            $now = date('Y-m-d H:i:s');
+            // A cylinder cannot be sent before its last stock movement (e.g. before it was bought or returned).
+            $lastMove = $this->db->table('inventory_movements')->selectMax('movement_at', 'm')
+                ->whereIn('cylinder_unit_id', array_keys($units))->get()->getRowArray()['m'] ?? null;
+            $now = $this->resolveDate($date, $fromId, $lastMove ?: null);
             $this->db->table('stock_transfers')->insert([
                 'transfer_no' => $no, 'from_location_id' => $fromId, 'to_location_id' => $toId, 'status' => 'in_transit',
                 'dispatched_at' => $now, 'dispatched_by' => $userId, 'notes' => $notes !== '' ? $notes : null,
@@ -121,7 +159,7 @@ class StockTransferService
     /**
      * @param array<int,array{received?:mixed,gas?:mixed}> $lines transfer item id => what arrived. An item not ticked as received is missing.
      */
-    public function receive(int $transferId, int $atLocationId, array $lines, string $notes, int $userId): array
+    public function receive(int $transferId, int $atLocationId, array $lines, string $notes, int $userId, ?string $date = null): array
     {
         $this->cost->ensureReady($atLocationId);
         $this->db->transBegin();
@@ -130,7 +168,7 @@ class StockTransferService
             if (!$t || (int) $t['to_location_id'] !== $atLocationId) throw new RuntimeException('Transfer not found at this branch.');
             if ($t['status'] !== 'in_transit') throw new RuntimeException('Transfer ' . $t['transfer_no'] . ' is already ' . str_replace('_', ' ', $t['status']) . '.');
             $items = $this->db->table('stock_transfer_items')->where('transfer_id', $transferId)->get()->getResultArray();
-            $now = date('Y-m-d H:i:s');
+            $now = $this->resolveDate($date, $atLocationId, (string) $t['dispatched_at']);
             $summary = ['received' => 0, 'missing' => 0, 'gas_sent_kg' => 0.0, 'gas_received_kg' => 0.0];
             foreach ($items as $it) {
                 $itemId = (int) $it['id'];
@@ -245,9 +283,20 @@ class StockTransferService
     }
 
     /** Transfers in or out of a branch, newest first. */
-    public function listFor(int $locationId, int $limit = 200): array
+    /**
+     * Transfers sent or received by a branch. With $from / $to (Y-m-d) only those dispatched in that period,
+     * plus every transfer still in transit (so nothing waiting to be received is ever hidden).
+     */
+    public function listFor(int $locationId, int $limit = 200, ?string $from = null, ?string $to = null): array
     {
-        return $this->db->table('stock_transfers t')
+        $q = $this->db->table('stock_transfers t');
+        if ($from !== null && $to !== null) {
+            $q->groupStart()
+                ->groupStart()->where('t.dispatched_at >=', $from . ' 00:00:00')->where('t.dispatched_at <=', $to . ' 23:59:59')->groupEnd()
+                ->orWhere('t.status', 'in_transit')
+            ->groupEnd();
+        }
+        return $q
             ->select("t.*, lf.name from_name, lt.name to_name, ud.full_name dispatched_by_name, ur.full_name received_by_name,
                 (SELECT COUNT(*) FROM stock_transfer_items i WHERE i.transfer_id=t.id AND i.sent_status='filled') filled_count,
                 (SELECT COUNT(*) FROM stock_transfer_items i WHERE i.transfer_id=t.id AND i.sent_status='empty') empty_count,

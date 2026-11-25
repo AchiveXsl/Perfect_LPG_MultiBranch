@@ -271,3 +271,8 @@ Screen: Cash & Expenses → Loans (`/loans`), permission `LOAN_MANAGE` (Admin by
 - Sale History has a **Cylinders** column: cylinder codes with counts, e.g. `C11_8 (2), C45 (1)` (gas lines count KG / capacity, at least 1 per line). CSV and PDF exports include it.
 - Customer ledger PDF: the customer page has Export PDF at the top (same as the Details tab export), and Reports → Customer Ledger has its own Export PDF (opening balance, all rows, current OS).
 - Expense history: date filter (default current month), total row, Export PDF.
+
+## Stock transfer dates (owner decision 2026-11-25)
+- Dispatch (New Transfer) and receive forms have a date-time field, default now. Shop Settings → Inventory Control → **Stock Transfer: Days Back Allowed** (`shop_settings.transfer_backdate_days`, migration 051, per branch): blank = back to the 1st of the current month (default), 0 = today only.
+- `StockTransferService::resolveDate()` enforces it server-side: never in the future, never before the branch limit; a dispatch never before the cylinders' last stock movement; a receipt never before the dispatch. The stock movements of that step use the chosen date.
+- Transfer list has a From / To filter on the dispatch date (default current month); transfers still in transit always show.
