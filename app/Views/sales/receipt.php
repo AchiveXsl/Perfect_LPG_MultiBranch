@@ -89,7 +89,35 @@ $trim=static fn(float $v,int $d=2):string=>rtrim(rtrim(number_format($v,$d,'.','
 <div class="row total"><span>Total Cylinders With Customer</span><span><?=number_format((int)($sale['cylinders_with_customer']??0))?></span></div>
 <?php endif;?>
 <div class="rule"></div><div class="footer"><?=nl2br(esc($shopSettings['receipt_footer']??'Thank you'))?></div>
-<div class="actions"><button type="button" onclick="window.print()">Print</button><button type="button" id="savePdfBtn" title="Opens the print dialog. Choose Save as PDF as the destination.">Save as PDF</button><button type="button" onclick="window.close()">Close</button></div>
+<div class="actions"><button type="button" onclick="window.print()">Print</button><button type="button" id="savePdfBtn" title="Opens the print dialog. Choose Save as PDF as the destination.">Save as PDF</button><button type="button" id="shareWaBtn" style="background:#25d366;color:#fff;border:1px solid #1da851">WhatsApp</button><button type="button" id="closeBtn" onclick="window.close()">Close</button></div>
 <script>/* Receipt opens as a preview; print only when the user clicks Print. */
 (function(){var b=document.getElementById("savePdfBtn");if(!b)return;var name=<?=json_encode("Receipt-".($sale["sale_no"]??""))?>,old=document.title;b.onclick=function(){document.title=name;window.onafterprint=function(){document.title=old;window.onafterprint=null;};window.print();};})();</script>
+<script>if(window.self!==window.top){var cb=document.getElementById("closeBtn");if(cb)cb.style.display="none";}</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script>
+(function(){
+  var btn=document.getElementById("shareWaBtn");if(!btn)return;
+  var no=<?= json_encode((string) ($sale["sale_no"] ?? "")) ?>,supplier=<?= json_encode((string) ($sale["customer_name"] ?? "")) ?>;
+  var phone=(<?= json_encode((string) ($sale["customer_phone"] ?? "")) ?>).replace(/\D+/g,"");
+  if(phone.indexOf("00")===0)phone=phone.slice(2);else if(phone.charAt(0)==="0")phone="92"+phone.slice(1);
+  var fname="Receipt-"+no.replace(/[^A-Za-z0-9]+/g,"-")+".png",text="Receipt "+no+" - "+supplier;
+  function download(blob){var a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=fname;document.body.appendChild(a);a.click();a.remove();}
+  btn.onclick=function(){
+    if(!window.html2canvas){alert("Image sharing needs an internet connection to load. Try again.");return;}
+    var actions=document.querySelector(".actions"),oldMargin=document.body.style.margin;actions.style.visibility="hidden";document.body.style.margin="0";window.scrollTo(0,0);
+    html2canvas(document.body,{scale:3,backgroundColor:"#ffffff",width:document.body.offsetWidth,height:actions.offsetTop,x:0,y:0,scrollX:0,scrollY:0,windowWidth:document.body.offsetWidth+40}).then(function(cv){
+      actions.style.visibility="";document.body.style.margin=oldMargin;
+      cv.toBlob(function(blob){
+        if(!blob){alert("Could not create the image.");return;}
+        var file=new File([blob],fname,{type:"image/png"});
+        if(navigator.canShare&&navigator.canShare({files:[file]})){navigator.share({files:[file],title:text}).catch(function(){});return;}
+        window.open("https://wa.me/"+phone+"?text="+encodeURIComponent(text),"_blank");
+        if(navigator.clipboard&&window.ClipboardItem){
+          navigator.clipboard.write([new ClipboardItem({"image/png":blob})]).then(function(){alert("The receipt image is copied. In the WhatsApp chat, press Ctrl+V to paste it, then Send.");}).catch(function(){download(blob);alert("The image was saved as "+fname+". Attach it in the WhatsApp chat.");});
+        }else{download(blob);alert("The image was saved as "+fname+". Attach it in the WhatsApp chat.");}
+      },"image/png");
+    }).catch(function(){actions.style.visibility="";document.body.style.margin=oldMargin;alert("Could not create the image.");});
+  };
+})();
+</script>
 <?= view('partials/i18n_foot', ['uiLang' => $uiLang]) ?></body></html>
