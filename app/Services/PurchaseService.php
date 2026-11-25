@@ -127,6 +127,102 @@ class PurchaseService{
       -(float)($ap['account_paid']??0);
  }
 
+ /**
+  * Stock use of each purchase line, from its cost layers: [item_id => ['sold'=>qty sold, 'moved'=>qty transferred out, 'unit'=>'KG'|'cyl']].
+  * Sold quantity is what posted sales consumed (cost_layer_usage); moved is what left by transfer.
+  */
+ public function lineStockUse(int $purchaseId): array
+ {
+  $out=[];
+  foreach($this->db->table('cost_layers')->where(['source_type'=>'purchase','source_id'=>$purchaseId])->get()->getResultArray() as $l){
+   $sold=(float)($this->db->query('SELECT COALESCE(SUM(qty),0) q FROM cost_layer_usage WHERE layer_id=? AND reversed=0',[(int)$l['id']])->getRowArray()['q']??0);
+   $used=max(0,(float)$l['qty_in']-(float)$l['qty_left']);
+   $out[(int)$l['source_line_id']]=['sold'=>round($sold,3),'moved'=>round(max(0,$used-$sold),3),'unit'=>$l['kind']==='gas'?'KG':'cyl'];
+  }
+  return $out;
+ }
+
+ /**
+  * Change the rate of purchase lines after posting (owner decision 2026-11-24). Quantities and stock never change.
+  * - Line total, purchase total and the supplier payable change by the difference (money already paid stays).
+  * - The cost layer of each line takes the new unit cost, so stock still on hand is costed at the new rate.
+  * - If any of that stock was already sold, $applyToSales must be true: the cost and profit of those sales are
+  *   restated with the new rate. Otherwise it is refused with a message the screen shows as a question.
+  * Stock already transferred to another branch keeps the cost it carried.
+  * $rates is [purchase_item_id => new rate].
+  */
+ public function changeRates(int $purchaseId,array $rates,string $reason,bool $applyToSales,int $userId,int $locationId): array
+ {
+  $reason=trim($reason);
+  if($reason==='') throw new RuntimeException('Enter a reason for the rate change.');
+  $this->db->transBegin();
+  try{
+   $p=$this->db->query('SELECT * FROM purchases WHERE id=? AND location_id=? FOR UPDATE',[$purchaseId,$locationId])->getRowArray();
+   if(!$p) throw new RuntimeException('Purchase not found in this branch.');
+   if($p['status']!=='posted') throw new RuntimeException('A voided purchase cannot be changed.');
+   $items=[];
+   foreach($this->db->table('purchase_items')->where('purchase_id',$purchaseId)->get()->getResultArray() as $it) $items[(int)$it['id']]=$it;
+   $use=$this->lineStockUse($purchaseId);
+   $changed=[];
+   foreach($rates as $itemId=>$rate){
+    $itemId=(int)$itemId; if(!isset($items[$itemId]) || $rate===null || $rate==='') continue;
+    if(!is_numeric($rate) || (float)$rate<0) throw new RuntimeException('Rates must be zero or more.');
+    $rate=round((float)$rate,4);
+    if(abs($rate-(float)$items[$itemId]['unit_rate'])<0.00005) continue;
+    $changed[$itemId]=$rate;
+   }
+   if(!$changed) throw new RuntimeException('No rate was changed.');
+   $soldLines=array_filter(array_keys($changed),static fn($id)=>($use[$id]['sold']??0)>0.0005);
+   if($soldLines && !$applyToSales){
+    throw new RuntimeException('Stock of this purchase is already sold. Changing the rate may change the profit and loss of those sales. Confirm to apply the new purchase rate to all sales linked with this purchase batch.');
+   }
+
+   $delta=0.0; $restated=[];
+   foreach($changed as $itemId=>$rate){
+    $it=$items[$itemId];
+    $oldTotal=(float)$it['line_total']; $newTotal=round((float)$it['quantity']*$rate,2);
+    $delta+=$newTotal-$oldTotal;
+    $this->db->table('purchase_items')->where('id',$itemId)->update(['unit_rate'=>$rate,'line_total'=>$newTotal]);
+    // The line cost layer: same quantity, new unit cost.
+    foreach($this->db->table('cost_layers')->where(['source_type'=>'purchase','source_id'=>$purchaseId,'source_line_id'=>$itemId])->get()->getResultArray() as $l){
+     $q=(float)$l['qty_in']; if($q<=0) continue;
+     $newUnit=$newTotal/$q; $diff=$newUnit-(float)$l['unit_cost'];
+     $this->db->table('cost_layers')->where('id',(int)$l['id'])->update(['unit_cost'=>$newUnit]);
+     // Sales that consumed this layer: their cost moves by consumed qty x unit cost difference.
+     foreach($this->db->table('cost_layer_usage')->where(['layer_id'=>(int)$l['id'],'reversed'=>0])->get()->getResultArray() as $u){
+      $amount=(float)$u['amount']+(float)$u['qty']*$diff;
+      $this->db->table('cost_layer_usage')->where('id',(int)$u['id'])->update(['amount'=>$amount,'unit_cost'=>(float)$u['qty']>0?$amount/(float)$u['qty']:(float)$u['unit_cost']]);
+      $restated[(int)$u['sale_item_id']]=(int)$u['sale_id'];
+     }
+    }
+    $this->db->table('purchase_rate_changes')->insert([
+     'purchase_id'=>$purchaseId,'purchase_item_id'=>$itemId,'old_rate'=>(float)$it['unit_rate'],'new_rate'=>$rate,
+     'old_line_total'=>$oldTotal,'new_line_total'=>$newTotal,'sold_qty'=>(float)($use[$itemId]['sold']??0),
+     'sales_restated'=>($use[$itemId]['sold']??0)>0.0005?1:0,'reason'=>$reason,'changed_by'=>$userId,'changed_at'=>date('Y-m-d H:i:s'),
+    ]);
+   }
+   // Sale lines whose cost moved: totals come back from their usage rows.
+   foreach(array_keys($restated) as $saleItemId){
+    $r=$this->db->query("SELECT COALESCE(SUM(CASE WHEN kind='gas' THEN amount END),0) g, COALESCE(SUM(CASE WHEN kind='cylinder' THEN amount END),0) c FROM cost_layer_usage WHERE sale_item_id=? AND reversed=0",[$saleItemId])->getRowArray();
+    $this->db->table('sale_items')->where('id',$saleItemId)->update(['cost_gas'=>round((float)$r['g'],2),'cost_cylinder'=>round((float)$r['c'],2),'cost_amount'=>round((float)$r['g']+(float)$r['c'],2)]);
+   }
+   // Purchase totals and the unpaid part (credit). Money already paid stays as paid.
+   $subtotal=round((float)$p['subtotal']+$delta,2);
+   $discount=(float)$p['discount_amount'];
+   if($discount>$subtotal+0.004) throw new RuntimeException('The new rates make the purchase smaller than its discount.');
+   $this->db->table('purchases')->where('id',$purchaseId)->update([
+    'subtotal'=>$subtotal,'total_amount'=>round($subtotal-$discount,2),'credit_amount'=>round((float)$p['credit_amount']+$delta,2),
+   ]);
+   if(!$this->db->transStatus()) throw new RuntimeException('Rate change failed.');
+   $this->db->transCommit();
+  }catch(\Throwable $e){
+   $this->db->transRollback();
+   throw $e;
+  }
+  AuditService::log('RATE_CHANGE','purchase',$purchaseId,['total_amount'=>(float)$p['total_amount']],['total_amount'=>round($subtotal-$discount,2),'lines'=>$changed,'sales_restated'=>count(array_unique($restated)),'reason'=>$reason],$userId,$locationId);
+  return ['purchase_no'=>$p['purchase_no'],'delta'=>round($delta,2),'sales'=>count(array_unique($restated))];
+ }
+
  public function canVoidPurchase(int $userId,int $locationId): bool
  {
   if($userId<=0 || $locationId<=0) return false;

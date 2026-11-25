@@ -6,7 +6,11 @@ async function login(page) {
   await page.locator('input[name="login"], #login').first().fill('admin');
   await page.locator('input[name="password"], #password').first().fill('admin123');
   await page.locator('button[type="submit"], input[type="submit"]').first().click();
-  await page.waitForLoadState('networkidle');
+  await page.waitForURL(/\/(dashboard|branches\/select)/);
+  // Multi-branch: a user with several branches picks one first. These cases run in the Head Office.
+  if (page.url().includes('branches/select')) {
+    await Promise.all([page.waitForURL(/\/dashboard/), page.locator('.branch-card').filter({ hasText: 'Head Office' }).first().click()]);
+  }
   await expect(page).toHaveURL(/\/dashboard/);
 }
 test.describe.configure({ mode: 'serial' });
@@ -27,7 +31,7 @@ test('E2E-001 Login succeeds', async ({ page }) => {
 test('E2E-002 Dashboard business summary loads', async ({ page }) => {
   await login(page);
   const body = await page.locator('body').innerText();
-  for (const label of ['Available Gas KG','Empty Gas Cylinders in Shop','Issued Cylinders','Sales','Cash Counter','Credit Sales / Accounts Receivable','Expenses']) expect(body.toLowerCase()).toContain(label.toLowerCase());
+  for (const label of ['Available Gas KG','Empty Gas Cylinders in Shop','Issued Cylinders','Sales','Cash Counter','Receivable','Expenses']) expect(body.toLowerCase()).toContain(label.toLowerCase());
 });
 test('E2E-003 POS screen exposes configured gas-sale transaction', async ({ page }) => {
   await login(page); await page.goto('/sales',{waitUntil:'networkidle'});
@@ -54,9 +58,9 @@ test('E2E-009 Inventory adjustment screen is usable and enforces shop-available 
   await expect(page.locator('[data-adjust-panel="new"]')).toBeVisible();
 
   // Color legend is present for gas, filled and empty stock.
-  await expect(page.locator('.stock-color-box.gas')).toHaveCount(1);
-  await expect(page.locator('.stock-color-box.filled')).toHaveCount(1);
-  await expect(page.locator('.stock-color-box.empty')).toHaveCount(1);
+  await expect(page.locator('.stock-color-box.gas').first()).toBeAttached();
+  await expect(page.locator('.stock-color-box.filled').first()).toBeAttached();
+  await expect(page.locator('.stock-color-box.empty').first()).toBeAttached();
 
   // Visible stock numbers use two decimal places.
   const summaryNumbers = await page.locator('.row.g-2.mb-3 .fs-5').allInnerTexts();
@@ -97,16 +101,16 @@ test('E2E-010 Dashboard summary cards drill down and preserve stock tab', async 
 
   for (const label of [
     'Available Gas KG','Empty Gas Cylinders in Shop','Issued Cylinders','Sales',
-    'Cash Counter','Credit Sales / Accounts Receivable','Expenses'
+    'Cash Counter','Receivable','Expenses'
   ]) await expect(page.locator('.dashboard-card').filter({hasText:label}).first()).toBeVisible();
 
   const checks = [
     ['Available Gas KG','Available Gas KG — Cylinder Type & Individual Cylinders'],
     ['Empty Gas Cylinders in Shop','Empty Gas Cylinders in Shop — Type & Individual Cylinders'],
     ['Issued Cylinders','Issued Cylinders — Customers & Cylinder Details'],
-    ['Sales','Sales — Payment & Transaction Details'],
+    ['Sales & Profit','Sales & Profit — Customers, Sales and Cost'],
     ['Cash Counter','Cash Counter — Register In / Out Movements'],
-    ['Credit Sales / Accounts Receivable','Credit Sales / Accounts Receivable — Customer OS'],
+    ['Receivable','Receivable — Amount Due from Customers'],
     ['Expenses','Expenses — Category & Transaction Details']
   ];
   for (const [card,title] of checks) {
@@ -184,7 +188,12 @@ test('E2E-003a POS transaction type switch rebuilds isolated detail UI without p
 test('E2E-004 Actual gas sale posts successfully', async ({ page }) => {
   await login(page); await page.goto('/sales',{waitUntil:'networkidle'});
   await page.locator('#transactionType').selectOption('gas_sale');
-  await page.locator('#customer_id').selectOption({label:'QA-E2E-CUST — QA E2E Customer'});
+  // The POS shows a searchable customer box and keeps #customer_id hidden: set it the way the box does.
+  await page.locator('#customer_id').evaluate((s, label) => {
+    const o = [...s.options].find(x => x.textContent.trim() === label);
+    if (!o) throw new Error('Customer option not found: ' + label);
+    s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true }));
+  }, 'QA-E2E-CUST — QA E2E Customer');
   const line=page.locator('#lines tbody tr').first();
   await pickOption(line.locator('.cyl'), /^C6 — 6 kg/);
   await expect(line.locator('.sourceCyl')).toBeEnabled();

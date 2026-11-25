@@ -188,7 +188,19 @@ class Sales extends Controller
         $customer=trim((string)$this->request->getGet('customer')); if($customer!=='') $b->groupStart()->like('c.name',$customer)->orLike('c.code',$customer)->groupEnd();
         $type=trim((string)$this->request->getGet('transaction_type')); if($type!=='') $b->where('s.transaction_type',$type);
         $saleNo=trim((string)$this->request->getGet('sale_no')); if($saleNo!=='') $b->like('s.sale_no',$saleNo);
-        return $this->response->setJSON(['from'=>$from,'to'=>$to,'sales'=>$b->get()->getResultArray()]);
+        $sales=$b->get()->getResultArray();
+        // Cylinder types per sale, e.g. "C11_8 (2), C45 (1)". Gas lines store KG, so they count KG / capacity (at least 1 per line).
+        $ids=array_map(static fn($s)=>(int)$s['id'],$sales); $cyl=[];
+        if($ids){
+            foreach($db->query("SELECT si.sale_id, ct.code, SUM(CASE WHEN si.line_type='refill_kg' THEN GREATEST(1, FLOOR(si.quantity/NULLIF(ct.capacity_kg,0)+0.0005)) ELSE si.quantity END) n
+                FROM sale_items si JOIN cylinder_types ct ON ct.id=si.cylinder_type_id
+                WHERE si.sale_id IN (".implode(',',$ids).") GROUP BY si.sale_id, ct.id, ct.code ORDER BY ct.sort_order, ct.code")->getResultArray() as $r){
+                $cyl[(int)$r['sale_id']][]=$r['code'].' ('.rtrim(rtrim(number_format((float)$r['n'],3,'.',''),'0'),'.').')';
+            }
+        }
+        foreach($sales as &$s) $s['cylinders']=implode(', ',$cyl[(int)$s['id']]??[]);
+        unset($s);
+        return $this->response->setJSON(['from'=>$from,'to'=>$to,'sales'=>$sales]);
     }
     public function details(int $id)
     {

@@ -44,7 +44,7 @@ class Customers extends Controller
                 if($code!=='') { $key=strtoupper($code); if(isset($seenCodes[$key])) throw new \RuntimeException('Row '.$row['excel_row'].': duplicate customer code '.$code.' in the uploaded file.'); $seenCodes[$key]=true; if($this->model->where('code',$code)->first()) throw new \RuntimeException('Row '.$row['excel_row'].': customer code '.$code.' already exists. Existing customers are not overwritten.'); }
                 foreach([['credit_limit','Credit Limit'],['opening_balance','Opening Balance']] as [$field,$label]){ if($row[$field]===''||!is_numeric($row[$field])||(float)$row[$field]<0) throw new \RuntimeException('Row '.$row['excel_row'].': '.$label.' must be a number greater than or equal to 0.'); }
                 foreach([['allow_credit_sale','Allow Credit Sale'],['is_active','Active']] as [$field,$label]) if(!in_array($row[$field],['0','1'],true)) throw new \RuntimeException('Row '.$row['excel_row'].': '.$label.' must be 0 or 1.');
-                $data=['code'=>$code?:null,'name'=>$name,'phone'=>$row['phone']?:null,'city'=>$row['city']?:null,'address'=>$row['address']?:null,'vehicle_no'=>$row['vehicle_no']?:null,'credit_limit'=>(float)$row['credit_limit'],'allow_credit_sale'=>(int)$row['allow_credit_sale'],'opening_balance'=>(float)$row['opening_balance'],'is_active'=>(int)$row['is_active'],'branch_scope'=>'shared','credit_scope'=>'branch','home_location_id'=>BranchContext::currentId()];
+                $data=['code'=>$code?:null,'name'=>$name,'phone'=>$row['phone']?:null,'city'=>$row['city']?:null,'address'=>$row['address']?:null,'vehicle_no'=>$row['vehicle_no']?:null,'credit_limit'=>(float)$row['credit_limit'],'allow_credit_sale'=>(int)$row['allow_credit_sale'],'opening_balance'=>(float)$row['opening_balance'],'is_active'=>(int)$row['is_active'],'branch_scope'=>CustomerModel::branchOnly()?'branch':'shared','credit_scope'=>'branch','home_location_id'=>BranchContext::currentId()];
                 $id=$this->model->insert($data,true); if(!$id) throw new \RuntimeException('Row '.$row['excel_row'].': customer could not be created.');
                 AuditService::log('excel_import','customer',(int)$id,null,$data,$userId,(int)(session()->get('location_id')??0)); $created++;
             }
@@ -231,6 +231,12 @@ class Customers extends Controller
             'credit_scope'=>$this->request->getPost('credit_scope')==='combined' ? 'combined' : 'branch',
             'home_location_id'=>(int)$this->request->getPost('home_location_id') ?: BranchContext::currentId(),
         ];
+        if(CustomerModel::branchOnly()){
+            // Split purchasing: the customer belongs to one branch, its home branch (current branch for a new one).
+            $existing=$id ? $this->model->find($id) : null;
+            $data['branch_scope']='branch'; $data['credit_scope']='branch';
+            $data['home_location_id']=$existing ? CustomerModel::homeOf($existing) : BranchContext::currentId();
+        }
         if($data['name']==='') return redirect()->back()->withInput()->with('error','Customer name is required.');
         if($data['credit_limit']<0||$data['opening_balance']<0) return redirect()->back()->withInput()->with('error','Credit limit and opening balance cannot be negative.');
         if(!in_array($data['home_location_id'],array_map('intval',array_column(BranchContext::allActive(),'id')),true)) return redirect()->back()->withInput()->with('error','Select an active home branch.');

@@ -1023,7 +1023,8 @@ class SalesService
                 // while the server silently allows unlimited credit.
                 $creditLimit=(float)($customerForCredit['credit_limit']??0);
                 // credit_scope 'combined': what the customer owes at the other branches counts against the same limit.
-                $otherBranchesOs=($customerForCredit['credit_scope']??'branch')==='combined'
+                // Split purchasing: customers are branch-only, so only this branch's balance counts.
+                $otherBranchesOs=($customerForCredit['credit_scope']??'branch')==='combined' && !\App\Models\CustomerModel::branchOnly()
                     ? $this->customerCombinedGasBalance($customerId)-$this->customerGasBalance($customerId)
                     : 0.0;
                 if($creditLimit>0 && $newOs+$otherBranchesOs>$creditLimit+0.01){

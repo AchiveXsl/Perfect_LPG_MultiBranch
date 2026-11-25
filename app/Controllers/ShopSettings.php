@@ -273,6 +273,10 @@ class ShopSettings extends Controller
                 'ip_address'=>$this->request->getIPAddress(),
                 'user_agent'=>substr((string)$this->request->getUserAgent(),0,500)
             ]);
+            // Split purchasing: every customer becomes branch-only at its home branch (Head Office when none).
+            if ($purchaseMode === 'split') {
+                $db->query("UPDATE customers SET branch_scope='branch', credit_scope='branch', home_location_id=COALESCE(home_location_id, ?)", [BranchContext::headOfficeId()]);
+            }
             if (!$db->transStatus()) {
                 throw new \RuntimeException('Shop settings could not be saved.');
             }

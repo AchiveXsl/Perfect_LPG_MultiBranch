@@ -397,6 +397,36 @@
                                                 <div class="alert alert-light border">No purchase line details found.</div>
                                             <?php endif; ?>
 
+                                            <?php if ($detailStatus === 'posted' && !empty($detail['items'])): ?>
+                                                <details class="mb-4 purchase-rate-edit">
+                                                    <summary class="fw-semibold text-primary" style="cursor:pointer"><i class="bi bi-pencil-square me-1"></i>Edit Rates</summary>
+                                                    <form method="post" action="<?= site_url('purchases/rates/' . (int) $purchase['id']) ?>" class="border rounded p-3 mt-2 purchase-rate-form">
+                                                        <?= csrf_field() ?>
+                                                        <input type="hidden" name="from_date" value="<?= esc($fromDate) ?>">
+                                                        <input type="hidden" name="to_date" value="<?= esc($toDate) ?>">
+                                                        <input type="hidden" name="confirm_sold" value="0">
+                                                        <div class="small text-muted mb-2">Only the rate changes: quantity and stock stay the same. The supplier payable changes by the difference.</div>
+                                                        <table class="table table-sm align-middle mb-2">
+                                                            <thead><tr><th>#</th><th>Stock</th><th class="text-end">Qty</th><th class="text-end">Sold</th><th class="text-end">Current Rate</th><th style="width:150px" class="text-end">New Rate</th></tr></thead>
+                                                            <tbody>
+                                                            <?php foreach ($detail['items'] as $item): ?>
+                                                                <tr>
+                                                                    <td><?= (int) $item['line_no'] ?></td>
+                                                                    <td><?= esc(ucwords(str_replace('_', ' ', $item['line_type']))) ?> <?= esc($item['cylinder_code'] ?? '') ?></td>
+                                                                    <td class="text-end"><?= number_format((float) $item['quantity'], 2) ?></td>
+                                                                    <td class="text-end <?= (float) $item['sold_qty'] > 0 ? 'text-danger fw-semibold' : 'text-muted' ?>"><?= (float) $item['sold_qty'] > 0 ? number_format((float) $item['sold_qty'], 2) . ' ' . esc($item['stock_unit']) : 'None' ?></td>
+                                                                    <td class="text-end"><?= number_format((float) $item['unit_rate'], 2) ?></td>
+                                                                    <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end rate-input" name="rates[<?= (int) $item['id'] ?>]" value="<?= esc(rtrim(rtrim(number_format((float) $item['unit_rate'], 4, '.', ''), '0'), '.'), 'attr') ?>" data-old="<?= esc((string) (float) $item['unit_rate'], 'attr') ?>" data-sold="<?= esc((string) (float) $item['sold_qty'], 'attr') ?>"></td>
+                                                                </tr>
+                                                            <?php endforeach; ?>
+                                                            </tbody>
+                                                        </table>
+                                                        <input name="reason" class="form-control form-control-sm mb-2" maxlength="500" placeholder="Reason (required), e.g. final rate received from supplier" required>
+                                                        <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-check2 me-1"></i>Update Rates</button>
+                                                    </form>
+                                                </details>
+                                            <?php endif; ?>
+
                                             <div class="row g-4">
                                                 <div class="col-lg-7">
                                                     <h6 class="fw-semibold mb-2">Payments</h6>
@@ -735,6 +765,20 @@ document.getElementById('purchaseForm').onsubmit = function () {
 
 addLine();
 calculate();
+
+// Edit Rates: when a changed line's stock is already sold, ask before restating those sales.
+document.querySelectorAll('.purchase-rate-form').forEach(form => form.addEventListener('submit', e => {
+    const soldChanged = [...form.querySelectorAll('.rate-input')].some(i =>
+        Number(i.dataset.sold) > 0 && Math.abs(Number(i.value || 0) - Number(i.dataset.old)) > 0.00005);
+    form.querySelector('input[name="confirm_sold"]').value = '0';
+    if (soldChanged) {
+        if (!confirm('Stock of this purchase is already sold. Changing the rate may change the profit and loss of those sales.\n\nDo you want to apply the new purchase rate to all sales linked with this purchase batch?')) {
+            e.preventDefault();
+            return;
+        }
+        form.querySelector('input[name="confirm_sold"]').value = '1';
+    }
+}));
 </script>
 
 <?= $this->endSection() ?>

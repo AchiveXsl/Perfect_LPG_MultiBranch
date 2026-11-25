@@ -10,8 +10,19 @@ $scope = $edit['branch_scope'] ?? 'shared';
 $creditScope = $edit['credit_scope'] ?? 'branch';
 $home = (int) ($edit['home_location_id'] ?? 0) ?: (int) $currentBranchId;
 $canPickBranch = \App\Services\PermissionService::allows('BRANCH_MANAGE');
+$branchOnly = \App\Models\CustomerModel::branchOnly();
 ?>
 <div class="col-12"><hr class="my-1"><div class="fw-semibold">Branches</div></div>
+<?php if ($branchOnly):
+    // Split purchasing: the customer belongs to one branch only. Shown read-only, fixed on the server.
+    $homeName = '';
+    foreach ($branches as $b) if ((int) $b['id'] === $home) $homeName = $b['name'];
+?>
+<div class="col-md-4"><label class="form-label">Used at</label><input class="form-control" value="Home branch only" disabled></div>
+<div class="col-md-4"><label class="form-label">Home branch</label><input class="form-control" id="customerHomeBranch" value="<?= esc($homeName) ?>" disabled></div>
+<div class="col-md-4"><label class="form-label">Credit limit checked against</label><input class="form-control" value="This branch's balance" disabled></div>
+<div class="col-12"><div class="form-text">Each branch buys its own stock, so every customer belongs to one branch with its own credit limit and balance (Shop Settings → Purchasing Mode).</div></div>
+<?php return; endif; ?>
 <div class="col-md-4">
     <label class="form-label">Used at</label>
     <select name="branch_scope" class="form-select" id="customerBranchScope">
