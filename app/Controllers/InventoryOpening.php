@@ -95,6 +95,9 @@ class InventoryOpening extends Controller
         if (!$typeId) {
             return redirect()->back()->withInput()->with('error', 'Select a cylinder type.');
         }
+        if ($cylCost === null) {
+            return redirect()->back()->withInput()->with('error', 'Cylinder cost is required.');
+        }
         if (floor($qty) !== $qty) {
             return redirect()->back()->withInput()->with('error', 'Cylinder quantity must be a whole number.');
         }
