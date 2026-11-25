@@ -127,7 +127,7 @@
 #posReceiptActions .btn { min-width:130px; }
 #receiptPreviewOverlay { position:fixed; inset:0; z-index:2000; display:none; align-items:center; justify-content:center; background:rgba(15,23,42,.55); padding:1rem; }
 #receiptPreviewOverlay.is-visible { display:flex; }
-#receiptPreviewDialog { width:min(520px,96vw); height:min(760px,92vh); background:#fff; border-radius:.65rem; box-shadow:0 18px 50px rgba(0,0,0,.25); display:flex; flex-direction:column; overflow:hidden; }
+#receiptPreviewDialog { width:min(340px,96vw); height:min(700px,92vh); background:#fff; border-radius:.65rem; box-shadow:0 18px 50px rgba(0,0,0,.25); display:flex; flex-direction:column; overflow:hidden; }
 #receiptPreviewDialog .receipt-preview-head { display:flex; align-items:center; justify-content:space-between; gap:.5rem; padding:.6rem .75rem; border-bottom:1px solid #e5e7eb; font-weight:700; }
 #receiptPreviewFrame { flex:1; width:100%; border:0; background:#fff; }
 
@@ -331,7 +331,7 @@ $initialTransactionType = in_array((string)$defaultTransactionType, $posVisibleT
 <div id="receiptPreviewOverlay" aria-hidden="true">
   <div id="receiptPreviewDialog" role="dialog" aria-modal="true" aria-label="Receipt Print Preview">
     <div class="receipt-preview-head">
-      <span>Receipt Print Preview</span>
+      <span>Sale Receipt</span>
       <button type="button" class="btn btn-sm btn-outline-secondary" id="closeReceiptPreview">Close</button>
     </div>
     <iframe id="receiptPreviewFrame" title="Receipt Print Preview"></iframe>
@@ -1269,6 +1269,7 @@ document.getElementById('printReceiptBtn').onclick=printReceiptDirect;
 document.getElementById('closeReceiptPreview').onclick=closeReceiptPreview;
 receiptOverlay.addEventListener('click',e=>{if(e.target===receiptOverlay)closeReceiptPreview();});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeReceiptPreview();});
+<?php $flashReceipt=(string)(session()->getFlashdata('receipt_url')??''); if($flashReceipt!==''): ?>setTimeout(()=>{window.lastPostedReceiptUrl=<?=json_encode($flashReceipt)?>;openReceiptPreview();},0);<?php endif; ?>
 
 document.getElementById('saleForm').onsubmit=async(e)=>{
  e.preventDefault();const errorBox=document.getElementById('posValidationAlert'),saveBtn=document.getElementById('saveBtn');
