@@ -175,8 +175,8 @@
 
                 <div class="row g-2 mb-3">
                     <div class="col-6"><label class="form-label">Gas Cost per KG (Rs.)</label><input name="gas_cost_per_kg" id="gasCostPerKg" type="number" min="0" step="0.0001" class="form-control" placeholder="Optional"></div>
-                    <div class="col-6"><label class="form-label">Cylinder Cost (Rs. each)</label><input name="cylinder_cost" id="cylinderCost" type="number" min="0" step="0.01" class="form-control" placeholder="Optional"></div>
-                    <div class="form-text">Used for FIFO / LIFO / Average profit. Left blank counts as 0.</div>
+                    <div class="col-6"><label class="form-label">Cylinder Cost (Rs. each) <span class="text-danger">*</span></label><input name="cylinder_cost" id="cylinderCost" type="number" min="0" step="0.01" class="form-control" placeholder="Required" required></div>
+                    <div class="form-text">Used for FIFO / LIFO / Average profit. Cylinder cost is required. Gas cost left blank counts as 0.</div>
                 </div>
 
                 <div class="mb-3">
