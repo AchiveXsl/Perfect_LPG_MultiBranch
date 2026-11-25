@@ -1,5 +1,33 @@
 <?= $this->extend('layouts/app') ?>
 <?= $this->section('content') ?>
+<?php $purchaseReceiptUrl = (string) (session()->getFlashdata('receipt_url') ?? ''); ?>
+<style>
+#purchaseReceiptOverlay{position:fixed;inset:0;z-index:2000;display:none;align-items:center;justify-content:center;background:rgba(15,23,42,.55);padding:1rem}
+#purchaseReceiptOverlay.is-visible{display:flex}
+#purchaseReceiptDialog{background:#fff;border-radius:.75rem;width:min(420px,100%);height:min(720px,100%);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.3)}
+#purchaseReceiptDialog .hd{display:flex;justify-content:space-between;align-items:center;padding:.6rem .9rem;border-bottom:1px solid #e5e7eb;font-weight:600}
+#purchaseReceiptFrame{flex:1;border:0;width:100%}
+</style>
+<div id="purchaseReceiptOverlay" aria-hidden="true">
+    <div id="purchaseReceiptDialog" role="dialog" aria-modal="true" aria-label="Purchase Receipt">
+        <div class="hd"><span>Purchase Receipt</span><button type="button" class="btn btn-sm btn-outline-secondary" id="purchaseReceiptClose">Close</button></div>
+        <iframe id="purchaseReceiptFrame" title="Purchase receipt"></iframe>
+    </div>
+</div>
+<script>
+window.openPurchaseReceipt = function (url) {
+    document.getElementById('purchaseReceiptFrame').src = url;
+    document.getElementById('purchaseReceiptOverlay').classList.add('is-visible');
+};
+document.addEventListener('DOMContentLoaded', function () {
+    var overlay = document.getElementById('purchaseReceiptOverlay');
+    var close = function () { overlay.classList.remove('is-visible'); };
+    document.getElementById('purchaseReceiptClose').onclick = close;
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+    <?php if ($purchaseReceiptUrl !== ''): ?>window.openPurchaseReceipt(<?= json_encode($purchaseReceiptUrl) ?>);<?php endif; ?>
+});
+</script>
 
 <style>
 .purchase-page .card-header { background:#fff; }
@@ -278,12 +306,16 @@
                                             <td class="text-end">Rs. <?= number_format((float) $purchase['amount_paid'], 2) ?></td>
                                             <td class="text-end">Rs. <?= number_format((float) $purchase['credit_amount'], 2) ?></td>
                                             <td><span class="badge <?= $statusClass ?>"><?= esc(ucfirst($status)) ?></span></td>
-                                            <td class="text-center">
+                                            <td class="text-center text-nowrap">
                                                 <button type="button"
                                                     class="btn btn-sm btn-outline-primary"
                                                     data-bs-toggle="modal"
                                                     data-bs-target="#purchaseDetailModal<?= (int) $purchase['id'] ?>">
                                                     <i class="bi bi-eye me-1"></i>View
+                                                </button>
+                                                <button type="button" class="btn btn-sm btn-outline-secondary"
+                                                    onclick="openPurchaseReceipt(<?= esc(json_encode(site_url('purchases/receipt/' . (int) $purchase['id'] . '?reprint=1')), 'attr') ?>)">
+                                                    <i class="bi bi-printer me-1"></i>Receipt
                                                 </button>
                                             </td>
                                             <td class="text-center">
