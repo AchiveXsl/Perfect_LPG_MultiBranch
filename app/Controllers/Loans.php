@@ -27,8 +27,8 @@ class Loans extends Controller
         if ($r = $this->guard()) return $r;
         $db = Database::connect();
         $loc = BranchContext::currentId();
-        $from = self::validDate($this->request->getGet('from')) ? $this->request->getGet('from') : date('Y-m-01');
-        $to = self::validDate($this->request->getGet('to')) ? $this->request->getGet('to') : date('Y-m-d');
+        $from = self::validDate($this->request->getGet('from')) ? $this->request->getGet('from') : substr(\App\Services\BranchContext::today(),0,8).'01';
+        $to = self::validDate($this->request->getGet('to')) ? $this->request->getGet('to') : \App\Services\BranchContext::today();
         if ($from > $to) [$from, $to] = [$to, $from];
 
         $lenders = $db->table('lenders')->where('location_id', $loc)->orderBy('name')->get()->getResultArray();

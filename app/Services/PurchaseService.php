@@ -16,7 +16,7 @@ class PurchaseService{
   * @return array{0:string,1:?string}
   */
  protected function resolvePurchaseDate(array $p):array{
-  $now=time();$input=str_replace('T',' ',trim((string)($p['transaction_at']??'')));
+  $now=\App\Services\BranchContext::nowTs();$input=str_replace('T',' ',trim((string)($p['transaction_at']??'')));
   if($input==='')return [date('Y-m-d H:i:s',$now),null];
   if(strlen($input)===16)$input.=':00';
   $d=\DateTime::createFromFormat('!Y-m-d H:i:s',$input);
@@ -92,6 +92,7 @@ class PurchaseService{
    $at=max($at,$openedAt);
   }
   $this->db->transBegin();
+  $tgMark = \App\Services\TimelineGuard::mark();
   try{
    $supplier=$this->db->query('SELECT * FROM suppliers WHERE id=? FOR UPDATE',[$supplierId])->getRowArray();
    if($credit>0){$currentCredit=$this->supplierBalance($supplierId,$locationId);if($currentCredit+$credit>(float)$supplier['credit_limit'])throw new RuntimeException('Supplier credit limit exceeded.');}
@@ -126,6 +127,7 @@ class PurchaseService{
    if($cashPurchase>0){$session=$this->cash->openSessionForLocation($locationId);if(!$session)throw new RuntimeException('Open the counter cash session before posting a cash purchase.');$this->cash->postGeneric((int)$session['id'],'purchase_cash','out',$cashPurchase,'purchase',$id,$userId,'Purchase cash',$at);}
    if(!$this->db->transStatus())throw new RuntimeException('Purchase posting failed.');
    (new CostService())->addPurchaseLayers($id);
+   \App\Services\TimelineGuard::check($tgMark, 'this purchase');
    $this->db->transCommit();AuditService::log('CREATE','purchase',$id,null,['purchase_no'=>$no,'transaction_at'=>$at,'backdate_reason'=>$backdateReason,'total'=>$total,'amount_paid'=>$paid,'current_credit'=>$credit,'previous_payable'=>$previousPayable,'new_payable'=>$newPayable],$userId,$locationId);return ['id'=>$id,'purchase_no'=>$no,'total'=>$total,'previous_payable'=>$previousPayable,'amount_paid'=>$paid,'balance_payable'=>$newPayable];
   }catch(\Throwable $e){$this->db->transRollback();throw $e;}
  }
@@ -229,7 +231,7 @@ class PurchaseService{
     $this->db->table('purchase_rate_changes')->insert([
      'purchase_id'=>$purchaseId,'purchase_item_id'=>$itemId,'old_rate'=>(float)$it['unit_rate'],'new_rate'=>$rate,
      'old_line_total'=>$oldTotal,'new_line_total'=>$newTotal,'sold_qty'=>(float)($use[$itemId]['sold']??0),
-     'sales_restated'=>($use[$itemId]['sold']??0)>0.0005?1:0,'reason'=>$reason,'changed_by'=>$userId,'changed_at'=>date('Y-m-d H:i:s'),
+     'sales_restated'=>($use[$itemId]['sold']??0)>0.0005?1:0,'reason'=>$reason,'changed_by'=>$userId,'changed_at'=>\App\Services\BranchContext::now(),
     ]);
    }
    // Sale lines whose cost moved: totals come back from their usage rows.
@@ -307,7 +309,7 @@ class PurchaseService{
      if($already>0) continue;
      $this->db->table('cash_transactions')->insert([
       'cash_session_id'=>$cash['cash_session_id'],'transaction_type'=>'supplier_payment','direction'=>'in',
-      'amount'=>$cash['amount'],'transaction_at'=>date('Y-m-d H:i:s'),
+      'amount'=>$cash['amount'],'transaction_at'=>\App\Services\BranchContext::now(),
       'reference_type'=>'supplier_payment_void','reference_id'=>$paymentId,'created_by'=>$userId,
       'notes'=>'Cash reversal of voided supplier payment '.$pay['payment_no']
      ]);
@@ -334,6 +336,7 @@ class PurchaseService{
   if($reason==='') throw new RuntimeException('Void reason is required.');
 
   $this->db->transBegin();
+  $tgMark = \App\Services\TimelineGuard::mark();
   try{
    $purchase=$this->db->query(
     'SELECT * FROM purchases WHERE id=? AND location_id=? FOR UPDATE',
@@ -426,7 +429,7 @@ class PurchaseService{
     $this->db->table('inventory_movements')->insert([
      'location_id'=>$m['location_id'],'inventory_type'=>$m['inventory_type'],
      'cylinder_type_id'=>$m['cylinder_type_id'],'quantity'=>$m['quantity'],
-     'direction'=>$reverse,'movement_at'=>date('Y-m-d H:i:s'),
+     'direction'=>$reverse,'movement_at'=>\App\Services\BranchContext::now(),
      'source_type'=>'purchase_void','source_id'=>$purchaseId,
      'source_line_id'=>$m['source_line_id']??null,
      'cylinder_unit_id'=>$unitId>0?$unitId:null,'created_by'=>$userId,'notes'=>$note
@@ -454,7 +457,7 @@ class PurchaseService{
 
     $this->db->table('cash_transactions')->insert([
      'cash_session_id'=>$cash['cash_session_id'],'transaction_type'=>'purchase_cash','direction'=>'in',
-     'amount'=>$cash['amount'],'transaction_at'=>date('Y-m-d H:i:s'),
+     'amount'=>$cash['amount'],'transaction_at'=>\App\Services\BranchContext::now(),
      'reference_type'=>'purchase_void','reference_id'=>$purchaseId,'created_by'=>$userId,
      'notes'=>'Cash reversal of purchase '.$purchase['purchase_no']
     ]);
@@ -498,7 +501,7 @@ class PurchaseService{
 
       $this->db->table('cash_transactions')->insert([
        'cash_session_id'=>$cash['cash_session_id'],'transaction_type'=>'supplier_payment','direction'=>'in',
-       'amount'=>$cash['amount'],'transaction_at'=>date('Y-m-d H:i:s'),
+       'amount'=>$cash['amount'],'transaction_at'=>\App\Services\BranchContext::now(),
        'reference_type'=>'purchase_void','reference_id'=>$purchaseId,'created_by'=>$userId,
        'notes'=>'Cash reversal of supplier payment '.$settlement['payment_no'].' from voided purchase '.$purchase['purchase_no']
       ]);
@@ -507,7 +510,7 @@ class PurchaseService{
    }
 
    $this->db->table('purchases')->where('id',$purchaseId)->update([
-    'status'=>'voided','voided_by'=>$userId,'voided_at'=>date('Y-m-d H:i:s'),'void_reason'=>$reason
+    'status'=>'voided','voided_by'=>$userId,'voided_at'=>\App\Services\BranchContext::now(),'void_reason'=>$reason
    ]);
 
    // A purchased physical cylinder did not exist before this purchase.
@@ -526,6 +529,7 @@ class PurchaseService{
 
    (new CostService())->voidPurchaseLayers($purchaseId);
    if(!$this->db->transStatus()) throw new RuntimeException('Purchase void failed.');
+   \App\Services\TimelineGuard::check($tgMark, 'this purchase void');
    $this->db->transCommit();
 
    AuditService::log('VOID','purchase',$purchaseId,

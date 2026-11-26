@@ -35,7 +35,7 @@ class Purchases extends Controller
         }
 
         $db = Database::connect();
-        $today = date('Y-m-d');
+        $today = \App\Services\BranchContext::today();
         $activeTab = (string) $this->request->getGet('tab') === 'history' ? 'history' : 'new';
         $fromDate = $this->validHistoryDate($this->request->getGet('from_date'), $today);
         $toDate = $this->validHistoryDate($this->request->getGet('to_date'), $today);

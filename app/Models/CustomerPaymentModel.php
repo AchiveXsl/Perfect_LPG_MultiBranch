@@ -28,7 +28,7 @@ class CustomerPaymentModel extends Model
      */
     public function totalForDate(?string $date = null): float
     {
-        $date = $date ?? date('Y-m-d');
+        $date = $date ?? \App\Services\BranchContext::today();
 
         $row = $this->selectSum('amount', 'total')
             ->where('payment_date', $date)

@@ -116,7 +116,7 @@ class RateResolver
      */
     public static function pricingTime(int $ts, ?int $now = null): int
     {
-        $now = $now ?? time();
+        $now = $now ?? \App\Services\BranchContext::nowTs();
         return ($ts <= $now && $ts > $now - self::NOW_WINDOW_SECONDS) ? $now : $ts;
     }
 

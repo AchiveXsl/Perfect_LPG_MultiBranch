@@ -21,6 +21,8 @@ class InventoryService{
    $row=$this->db->table('cylinder_units')
       ->selectSum('gas_weight_kg','q')
       ->where(['location_id'=>$locationId,'status'=>'filled'])
+      // Only cylinders free at the branch System Date (no movement after it) count as usable stock.
+      ->where('1=1'.\App\Services\TimelineGuard::freeAtSql('cylinder_units',\App\Services\BranchContext::now($locationId)),null,false)
       ->get()->getRowArray();
    return (float)($row['q']??0);
   }
@@ -30,6 +32,8 @@ class InventoryService{
    $status=$type==='filled_cylinder'?'filled':'empty';
    return (float)$this->db->table('cylinder_units')
       ->where(['location_id'=>$locationId,'cylinder_type_id'=>$typeId,'status'=>$status])
+      // Only cylinders free at the branch System Date (no movement after it) count as usable stock.
+      ->where('1=1'.\App\Services\TimelineGuard::freeAtSql('cylinder_units',\App\Services\BranchContext::now($locationId)),null,false)
       ->countAllResults();
   }
 
@@ -41,7 +45,7 @@ class InventoryService{
   if($qty<=0) throw new RuntimeException('Purchase quantity must be greater than zero.');
   if(!in_array($type,['gas_kg','filled_cylinder','empty_cylinder','refill_empty'],true)) throw new RuntimeException('Invalid purchase inventory type.');
 
-  $at=$at?:date('Y-m-d H:i:s');
+  $at=$at?:\App\Services\BranchContext::now();
 
   if($type==='refill_empty'){
    $this->refillEmptyCylinders($locationId,$typeId,$qty,$actualGasWeight,$purchaseId,$userId,$purchaseLineId,$at);
@@ -163,12 +167,13 @@ class InventoryService{
    if(!$ct || !(int)$ct['is_active']) throw new RuntimeException('Invalid or inactive cylinder type.');
 
    $this->db->transBegin();
+   $tgMark = \App\Services\TimelineGuard::mark();
    try{
     $beforeState=$this->adjustmentStockSnapshot($locationId,$type,$typeId,$sourceCylinderUnitId);
     $this->db->table('inventory_adjustments')->insert([
       'location_id'=>$locationId,'inventory_type'=>$type,'cylinder_type_id'=>$typeId,'adjustment_scope'=>'bulk','direction'=>$direction,
       'quantity'=>$qty,'actual_gas_weight_kg'=>$actualGasWeight,'source_cylinder_unit_id'=>null,'before_state'=>json_encode($beforeState),
-      'reason'=>$reason,'notes'=>$notes!==''?$notes:null,'status'=>'posted','created_by'=>$userId
+      'reason'=>$reason,'notes'=>$notes!==''?$notes:null,'status'=>'posted','created_by'=>$userId,'created_at'=>\App\Services\BranchContext::now()
     ]);
     $adjustmentId=(int)$this->db->insertID();
     $adjustmentNo='ADJ-'.str_pad((string)$adjustmentId,6,'0',STR_PAD_LEFT);
@@ -182,13 +187,13 @@ class InventoryService{
      foreach($unitIds as $unitId){
       $this->db->table('inventory_movements')->insert([
        'location_id'=>$locationId,'inventory_type'=>$type,'cylinder_type_id'=>$typeId,'quantity'=>1,'direction'=>'in',
-       'movement_at'=>date('Y-m-d H:i:s'),'source_type'=>'adjustment','source_id'=>$adjustmentId,'cylinder_unit_id'=>$unitId,
+       'movement_at'=>\App\Services\BranchContext::now(),'source_type'=>'adjustment','source_id'=>$adjustmentId,'cylinder_unit_id'=>$unitId,
        'created_by'=>$userId,'notes'=>$notes?:'Manual cylinder stock adjustment'
       ]);
       if($type==='filled_cylinder'){
        $this->db->table('inventory_movements')->insert([
         'location_id'=>$locationId,'inventory_type'=>'gas_kg','cylinder_type_id'=>null,'quantity'=>$gasPerUnit,'direction'=>'in',
-        'movement_at'=>date('Y-m-d H:i:s'),'source_type'=>'adjustment','source_id'=>$adjustmentId,'cylinder_unit_id'=>$unitId,
+        'movement_at'=>\App\Services\BranchContext::now(),'source_type'=>'adjustment','source_id'=>$adjustmentId,'cylinder_unit_id'=>$unitId,
         'created_by'=>$userId,'notes'=>'Gas contained in adjusted filled cylinder'.($notes?' — '.$notes:'')
        ]);
       }
@@ -200,14 +205,14 @@ class InventoryService{
       $unitId=(int)$unit['id'];
       $this->db->table('inventory_movements')->insert([
        'location_id'=>$locationId,'inventory_type'=>$type,'cylinder_type_id'=>$typeId,'quantity'=>1,'direction'=>'out',
-       'movement_at'=>date('Y-m-d H:i:s'),'source_type'=>'adjustment','source_id'=>$adjustmentId,'cylinder_unit_id'=>$unitId,
+       'movement_at'=>\App\Services\BranchContext::now(),'source_type'=>'adjustment','source_id'=>$adjustmentId,'cylinder_unit_id'=>$unitId,
        'created_by'=>$userId,'notes'=>$notes?:'Manual cylinder stock adjustment'
       ]);
       if($type==='filled_cylinder'){
        $gas=(float)$unit['gas_weight_kg'];
        if($gas>0) $this->db->table('inventory_movements')->insert([
         'location_id'=>$locationId,'inventory_type'=>'gas_kg','cylinder_type_id'=>null,'quantity'=>$gas,'direction'=>'out',
-        'movement_at'=>date('Y-m-d H:i:s'),'source_type'=>'adjustment','source_id'=>$adjustmentId,'cylinder_unit_id'=>$unitId,
+        'movement_at'=>\App\Services\BranchContext::now(),'source_type'=>'adjustment','source_id'=>$adjustmentId,'cylinder_unit_id'=>$unitId,
         'created_by'=>$userId,'notes'=>'Gas removed with adjusted filled cylinder'.($notes?' — '.$notes:'')
        ]);
       }
@@ -217,6 +222,7 @@ class InventoryService{
     if(!$this->db->transStatus()) throw new RuntimeException('Inventory adjustment failed.');
     $afterState=$this->adjustmentStockSnapshot($locationId,$type,$typeId,null);
     $this->db->table('inventory_adjustments')->where('id',$adjustmentId)->update(['after_state'=>json_encode($afterState)]);
+    \App\Services\TimelineGuard::check($tgMark, 'this stock adjustment');
     $this->db->transCommit();
     AuditService::log('CREATE','inventory_adjustment',$adjustmentId,['adjustment_no'=>$adjustmentNo,'before_state'=>$beforeState],['adjustment_no'=>$adjustmentNo,'inventory_type'=>$type,'cylinder_type_id'=>$typeId,'quantity'=>$qty,'direction'=>$direction,'actual_gas_weight_kg'=>$actualGasWeight,'reason'=>$reason,'notes'=>$notes,'adjustment_scope'=>'bulk','after_state'=>$afterState],$userId,$locationId);
    }catch(\Throwable $e){$this->db->transRollback();throw $e;}
@@ -227,18 +233,19 @@ class InventoryService{
   if($adjustmentScope==='specific' && $type!=='gas_kg' && abs($qty-1)>0.00001) throw new RuntimeException('A specific-cylinder adjustment can affect only one cylinder at a time.');
 
   $this->db->transBegin();
+  $tgMark = \App\Services\TimelineGuard::mark();
   try{
    $unit=$this->db->query('SELECT cu.*,ct.code cylinder_code,ct.name cylinder_name,ct.capacity_kg FROM cylinder_units cu JOIN cylinder_types ct ON ct.id=cu.cylinder_type_id WHERE cu.id=? AND cu.location_id=? FOR UPDATE',[$sourceCylinderUnitId,$locationId])->getRowArray();
    if(!$unit) throw new RuntimeException('Selected source cylinder was not found in this branch.');
    if($typeId===null || (int)$unit['cylinder_type_id']!==$typeId) throw new RuntimeException('Selected source cylinder does not match the selected cylinder type.');
    if($unit['status']==='custody' || $unit['status']==='sold') throw new RuntimeException('Selected cylinder is not available for stock adjustment.');
-   $now=date('Y-m-d H:i:s');
+   $now=\App\Services\BranchContext::now();
    $note=$notes!==''?$notes:'Specific physical cylinder stock adjustment';
    $beforeState=['unit_code'=>$unit['unit_code'],'status'=>$unit['status'],'gas_weight_kg'=>(float)$unit['gas_weight_kg'],'capacity_kg'=>(float)$unit['capacity_kg']];
    $this->db->table('inventory_adjustments')->insert([
     'location_id'=>$locationId,'inventory_type'=>$type,'cylinder_type_id'=>$typeId,'adjustment_scope'=>'specific','direction'=>$direction,
     'quantity'=>$qty,'actual_gas_weight_kg'=>$actualGasWeight,'source_cylinder_unit_id'=>$sourceCylinderUnitId,'before_state'=>json_encode($beforeState),
-    'reason'=>$reason,'notes'=>$notes!==''?$notes:null,'status'=>'posted','created_by'=>$userId
+    'reason'=>$reason,'notes'=>$notes!==''?$notes:null,'status'=>'posted','created_by'=>$userId,'created_at'=>$now
    ]);
    $adjustmentId=(int)$this->db->insertID(); $adjustmentNo='ADJ-'.str_pad((string)$adjustmentId,6,'0',STR_PAD_LEFT);
    $this->db->table('inventory_adjustments')->where('id',$adjustmentId)->update(['adjustment_no'=>$adjustmentNo]);
@@ -349,6 +356,7 @@ class InventoryService{
    if(!$afterUnit) throw new RuntimeException('Selected source cylinder could not be read after the adjustment.');
    $afterState=['unit_code'=>$afterUnit['unit_code'],'status'=>$afterUnit['status'],'gas_weight_kg'=>(float)$afterUnit['gas_weight_kg'],'capacity_kg'=>(float)$afterUnit['capacity_kg']];
    $this->db->table('inventory_adjustments')->where('id',$adjustmentId)->update(['after_state'=>json_encode($afterState)]);
+   \App\Services\TimelineGuard::check($tgMark, 'this stock adjustment');
    $this->db->transCommit();
    AuditService::log('CREATE','inventory_adjustment',$adjustmentId,['adjustment_no'=>$adjustmentNo,'before_state'=>$beforeState],['adjustment_no'=>$adjustmentNo,'inventory_type'=>$type,'cylinder_type_id'=>$typeId,'quantity'=>$qty,'direction'=>$direction,'actual_gas_weight_kg'=>$actualGasWeight,'source_cylinder_unit_id'=>$sourceCylinderUnitId,'adjustment_scope'=>'specific','reason'=>$reason,'notes'=>$notes,'after_state'=>$afterState],$userId,$locationId);
    return $adjustmentNo;

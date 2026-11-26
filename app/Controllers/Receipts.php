@@ -44,15 +44,15 @@ LIMIT 100",[$locationId,$locationId])->getResultArray()]);}
  }
  /** The chosen receive date with the current time of day. Blank means today. Future dates are rejected. */
  private function receiveDateTime(string $input): string{
-  $input=trim($input);if($input==='')return date('Y-m-d H:i:s');
+  $input=trim($input);if($input==='')return \App\Services\BranchContext::now();
   $d=\DateTime::createFromFormat('!Y-m-d',$input);
   if(!$d||$d->format('Y-m-d')!==$input)throw new \RuntimeException('Invalid receive date.');
-  if($input>date('Y-m-d'))throw new \RuntimeException('Receive date cannot be in the future.');
+  if($input>\App\Services\BranchContext::today())throw new \RuntimeException('Receive date cannot be in the future.');
   return $input.' '.date('H:i:s');
  }
  /** A receipt dated before today needs a reason. Today needs none. */
  private function backdateReason(string $receiptAt,string $input): ?string{
-  if(substr($receiptAt,0,10)>=date('Y-m-d'))return null;
+  if(substr($receiptAt,0,10)>=\App\Services\BranchContext::today())return null;
   $reason=trim($input);
   if($reason==='')throw new \RuntimeException('Enter the reason for the back-dated receipt.');
   if(mb_strlen($reason)>255)throw new \RuntimeException('Back-date reason cannot exceed 255 characters.');

@@ -34,7 +34,7 @@ class Inventory extends Controller
                     COALESCE(SUM(CASE WHEN cu.status='filled' THEN cu.gas_weight_kg ELSE 0 END),0) AS current_gas_kg,
                     COALESCE(SUM(CASE WHEN cu.status IN ('filled','empty') THEN ct.capacity_kg ELSE 0 END),0) AS total_capacity_kg
              FROM cylinder_types ct
-             LEFT JOIN cylinder_units cu
+             LEFT JOIN " . \App\Services\AsOfStock::unitsTable($locationId) . " cu
                ON cu.cylinder_type_id=ct.id
               AND cu.location_id=?
               AND cu.status IN ('filled','empty')
@@ -148,8 +148,8 @@ class Inventory extends Controller
 
         if (!$unit) return $this->response->setStatusCode(404)->setBody('Physical cylinder not found.');
 
-        $fromDate = $this->validDate($this->request->getGet('from_date'),date('Y-m-d'));
-        $toDate = $this->validDate($this->request->getGet('to_date'),date('Y-m-d'));
+        $fromDate = $this->validDate($this->request->getGet('from_date'),\App\Services\BranchContext::today());
+        $toDate = $this->validDate($this->request->getGet('to_date'),\App\Services\BranchContext::today());
         $allHistory = (string)$this->request->getGet('all_history') === '1';
         if ($fromDate > $toDate) [$fromDate,$toDate]=[$toDate,$fromDate];
 
@@ -209,8 +209,8 @@ class Inventory extends Controller
         $type = $db->table('cylinder_types')->where('id',$typeId)->where('is_active',1)->get()->getRowArray();
         if (!$type) return $this->response->setStatusCode(404)->setBody('Cylinder type not found.');
 
-        $from = $this->validDate($this->request->getGet('from_date'),date('Y-m-d'));
-        $to = $this->validDate($this->request->getGet('to_date'),date('Y-m-d'));
+        $from = $this->validDate($this->request->getGet('from_date'),\App\Services\BranchContext::today());
+        $to = $this->validDate($this->request->getGet('to_date'),\App\Services\BranchContext::today());
         $allHistory = (string)$this->request->getGet('all_history') === '1';
         if ($from > $to) [$from,$to]=[$to,$from];
 
@@ -333,8 +333,8 @@ class Inventory extends Controller
 
         $units=$db->table('cylinder_units cu')->select('cu.id,cu.unit_code,cu.status,cu.gas_weight_kg,cu.cylinder_type_id,ct.code cylinder_code,ct.name cylinder_name,ct.capacity_kg')->join('cylinder_types ct','ct.id=cu.cylinder_type_id')->where('cu.location_id',$locationId)->whereIn('cu.status',['filled','empty'])->orderBy('ct.sort_order')->orderBy('cu.unit_code')->get()->getResultArray();
 
-        $from=$this->validDate($this->request->getGet('from_date'),date('Y-m-d',strtotime('-30 days')));
-        $to=$this->validDate($this->request->getGet('to_date'),date('Y-m-d'));
+        $from=$this->validDate($this->request->getGet('from_date'),date('Y-m-d',strtotime(\App\Services\BranchContext::today().' -30 days')));
+        $to=$this->validDate($this->request->getGet('to_date'),\App\Services\BranchContext::today());
         if($from>$to)[$from,$to]=[$to,$from];
 
         $filterType=trim((string)$this->request->getGet('inventory_type'));

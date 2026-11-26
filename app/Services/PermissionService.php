@@ -55,6 +55,7 @@ class PermissionService
             'REPORT_ALL_BRANCHES' => 'View reports for all branches combined',
             'GAS_DECANT' => 'Move gas between cylinders (decanting)',
             'LOAN_MANAGE' => 'Manage loans taken from lenders',
+            'SYSTEM_DATE_CHANGE' => 'Change the branch System Date',
         ];
 
         foreach ($permissions as $code => $name) {
@@ -66,7 +67,7 @@ class PermissionService
 
         $roleDefaults = [
             'ADMIN' => array_keys($permissions),
-            'MANAGER' => array_values(array_diff(array_keys($permissions), ['USER_MANAGE', 'BRANCH_MANAGE', 'REPORT_ALL_BRANCHES'])),
+            'MANAGER' => array_values(array_diff(array_keys($permissions), ['USER_MANAGE', 'BRANCH_MANAGE', 'REPORT_ALL_BRANCHES', 'SYSTEM_DATE_CHANGE'])),
             'CASHIER' => ['DASHBOARD_VIEW', 'POS_SALE', 'POS_HISTORY', 'CUSTOMER_MANAGE', 'REPORT_VIEW'],
         ];
 

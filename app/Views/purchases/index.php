@@ -138,7 +138,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     <div class="col-lg-3">
                         <label class="form-label fw-semibold">Purchase Date &amp; Time</label>
                         <input name="transaction_at" id="purchaseDate" type="datetime-local" class="form-control" required
-                            value="<?= esc(old('transaction_at') ?: date('Y-m-d\TH:i'), 'attr') ?>" max="<?= date('Y-m-d\T23:59') ?>">
+                            value="<?= esc(old('transaction_at') ?: \App\Services\BranchContext::nowLocal(), 'attr') ?>" max="<?= \App\Services\BranchContext::today().'T23:59' ?>">
                     </div>
                     <div class="col-lg-9 d-none" id="purchaseBackdateBox">
                         <label class="form-label fw-semibold">Reason for back-dating <span class="text-danger">*</span></label>
@@ -267,11 +267,11 @@ document.addEventListener('DOMContentLoaded', function () {
                         <input type="hidden" name="tab" value="history">
                         <div class="col-md-4 col-lg-3">
                             <label class="form-label fw-semibold">From Date</label>
-                            <input type="date" name="from_date" class="form-control" value="<?= esc($fromDate ?? date('Y-m-d')) ?>" required>
+                            <input type="date" name="from_date" class="form-control" value="<?= esc($fromDate ?? \App\Services\BranchContext::today()) ?>" required>
                         </div>
                         <div class="col-md-4 col-lg-3">
                             <label class="form-label fw-semibold">To Date</label>
-                            <input type="date" name="to_date" class="form-control" value="<?= esc($toDate ?? date('Y-m-d')) ?>" required>
+                            <input type="date" name="to_date" class="form-control" value="<?= esc($toDate ?? \App\Services\BranchContext::today()) ?>" required>
                         </div>
                         <div class="col-md-4 col-lg-3">
                             <button type="submit" class="btn btn-primary w-100">
@@ -563,7 +563,7 @@ document.addEventListener('DOMContentLoaded', function () {
                         <?php endforeach; ?>
                     <?php else: ?>
                         <div class="alert alert-light border mb-0 text-center">
-                            No purchases found between <?= esc(date('d-M-Y', strtotime($fromDate ?? date('Y-m-d')))) ?> and <?= esc(date('d-M-Y', strtotime($toDate ?? date('Y-m-d')))) ?>.
+                            No purchases found between <?= esc(date('d-M-Y', strtotime($fromDate ?? \App\Services\BranchContext::today()))) ?> and <?= esc(date('d-M-Y', strtotime($toDate ?? \App\Services\BranchContext::today()))) ?>.
                         </div>
                     <?php endif; ?>
                 </div>

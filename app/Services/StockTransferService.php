@@ -47,7 +47,7 @@ class StockTransferService
         } catch (\Throwable $e) {
             // column not migrated yet
         }
-        return $days === null ? date('Y-m-01') : date('Y-m-d', strtotime('-' . $days . ' days'));
+        return $days === null ? substr(\App\Services\BranchContext::today(),0,8).'01' : date('Y-m-d', strtotime(\App\Services\BranchContext::today() . ' -' . $days . ' days'));
     }
 
     /**
@@ -57,12 +57,12 @@ class StockTransferService
     public function resolveDate(?string $input, int $locationId, ?string $notBefore = null): string
     {
         $input = trim((string) $input);
-        $now = date('Y-m-d H:i:s');
+        $now = \App\Services\BranchContext::now();
         if ($input === '') return $now;
         $ts = strtotime(str_replace('T', ' ', $input));
         if ($ts === false) throw new RuntimeException('Invalid transfer date.');
         $at = date('Y-m-d H:i:s', $ts);
-        if (date('Y-m-d', $ts) === date('Y-m-d') && $at > $now) $at = $now; // today's date with a later clock time: now
+        if (date('Y-m-d', $ts) === \App\Services\BranchContext::today() && $at > $now) $at = $now; // today's date with a later clock time: now
         if ($at > $now) throw new RuntimeException('The transfer date cannot be in the future.');
         $earliest = $this->earliestDate($locationId);
         if ($at < $earliest . ' 00:00:00') throw new RuntimeException('The transfer date cannot be before ' . date('d M Y', strtotime($earliest)) . ' (Shop Settings).');
@@ -81,6 +81,7 @@ class StockTransferService
 
         $this->cost->ensureReady($fromId);
         $this->db->transBegin();
+        $tgMark = \App\Services\TimelineGuard::mark();
         try {
             $units = [];
             // Specific cylinders first.
@@ -147,6 +148,7 @@ class StockTransferService
                 $totals['gas_kg'] += $gas;
             }
             if (!$this->db->transStatus()) throw new RuntimeException('Transfer could not be posted.');
+            \App\Services\TimelineGuard::check($tgMark, 'this transfer dispatch');
             $this->db->transCommit();
         } catch (\Throwable $e) {
             $this->db->transRollback();
@@ -163,6 +165,7 @@ class StockTransferService
     {
         $this->cost->ensureReady($atLocationId);
         $this->db->transBegin();
+        $tgMark = \App\Services\TimelineGuard::mark();
         try {
             $t = $this->db->query('SELECT * FROM stock_transfers WHERE id=? FOR UPDATE', [$transferId])->getRowArray();
             if (!$t || (int) $t['to_location_id'] !== $atLocationId) throw new RuntimeException('Transfer not found at this branch.');
@@ -204,6 +207,7 @@ class StockTransferService
                 'status' => 'received', 'received_at' => $now, 'received_by' => $userId, 'receive_notes' => $notes !== '' ? mb_substr($notes, 0, 500) : null,
             ]);
             if (!$this->db->transStatus()) throw new RuntimeException('Transfer could not be received.');
+            \App\Services\TimelineGuard::check($tgMark, 'this transfer receipt');
             $this->db->transCommit();
         } catch (\Throwable $e) {
             $this->db->transRollback();
@@ -219,11 +223,12 @@ class StockTransferService
         if ($reason === '') throw new RuntimeException('A reason is required to cancel a transfer.');
         $this->cost->ensureReady($atLocationId);
         $this->db->transBegin();
+        $tgMark = \App\Services\TimelineGuard::mark();
         try {
             $t = $this->db->query('SELECT * FROM stock_transfers WHERE id=? FOR UPDATE', [$transferId])->getRowArray();
             if (!$t || (int) $t['from_location_id'] !== $atLocationId) throw new RuntimeException('Only the sending branch can cancel this transfer.');
             if ($t['status'] !== 'in_transit') throw new RuntimeException('Transfer ' . $t['transfer_no'] . ' is already ' . str_replace('_', ' ', $t['status']) . '.');
-            $now = date('Y-m-d H:i:s');
+            $now = \App\Services\BranchContext::now();
             foreach ($this->db->table('stock_transfer_items')->where('transfer_id', $transferId)->get()->getResultArray() as $it) {
                 $u = $this->db->query('SELECT * FROM cylinder_units WHERE id=? FOR UPDATE', [(int) $it['cylinder_unit_id']])->getRowArray();
                 if (!$u || $u['status'] !== 'in_transit') throw new RuntimeException('Cylinder ' . ($u['unit_code'] ?? $it['cylinder_unit_id']) . ' is no longer in transit.');
@@ -233,6 +238,7 @@ class StockTransferService
                 'status' => 'cancelled', 'cancelled_at' => $now, 'cancelled_by' => $userId, 'cancel_reason' => mb_substr($reason, 0, 255),
             ]);
             if (!$this->db->transStatus()) throw new RuntimeException('Transfer could not be cancelled.');
+            \App\Services\TimelineGuard::check($tgMark, 'this transfer cancellation');
             $this->db->transCommit();
         } catch (\Throwable $e) {
             $this->db->transRollback();

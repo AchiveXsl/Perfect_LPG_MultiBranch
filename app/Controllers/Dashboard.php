@@ -21,7 +21,7 @@ class Dashboard extends Controller
 
     private function dateRange(): array
     {
-        $today = date('Y-m-d');
+        $today = \App\Services\BranchContext::today();
         $from = trim((string) $this->request->getGet('from'));
         $to = trim((string) $this->request->getGet('to'));
 
@@ -93,7 +93,7 @@ class Dashboard extends Controller
         $range = $this->dateRange();
 
         // 1) Available gas: live physical filled cylinders, grouped by cylinder type.
-        $gasRows = $db->table('cylinder_units cu')
+        $gasRows = $db->table(\App\Services\AsOfStock::unitsTable($locationId).' cu')
             ->select('cu.id,cu.unit_code,cu.gas_weight_kg,cu.updated_at,ct.id cylinder_type_id,ct.code type_code,ct.name type_name,ct.capacity_kg')
             ->join('cylinder_types ct', 'ct.id=cu.cylinder_type_id')
             ->where(['cu.location_id'=>$locationId,'cu.status'=>'filled'])
@@ -114,7 +114,7 @@ class Dashboard extends Controller
         $availableGasKg=array_sum(array_map(static fn($x)=>(float)$x['gas_kg'],$gasTypes));
 
         // 2) Empty physical cylinders in shop, grouped by type.
-        $emptyRows = $db->table('cylinder_units cu')
+        $emptyRows = $db->table(\App\Services\AsOfStock::unitsTable($locationId).' cu')
             ->select('cu.id,cu.unit_code,cu.updated_at,ct.id cylinder_type_id,ct.code type_code,ct.name type_name,ct.capacity_kg')
             ->join('cylinder_types ct', 'ct.id=cu.cylinder_type_id')
             ->where(['cu.location_id'=>$locationId,'cu.status'=>'empty'])
@@ -407,11 +407,11 @@ class Dashboard extends Controller
         }
 
         // Existing Stock tab data — intentionally retained.
-        $filled=$db->table('cylinder_units cu')
+        $filled=$db->table(\App\Services\AsOfStock::unitsTable($locationId).' cu')
             ->select('cu.id,cu.unit_code,cu.gas_weight_kg,cu.updated_at,ct.code type_code,ct.name type_name,ct.capacity_kg')
             ->join('cylinder_types ct','ct.id=cu.cylinder_type_id')
             ->where(['cu.location_id'=>$locationId,'cu.status'=>'filled'])->orderBy('ct.sort_order')->orderBy('cu.unit_code')->get()->getResultArray();
-        $empty=$db->table('cylinder_units cu')
+        $empty=$db->table(\App\Services\AsOfStock::unitsTable($locationId).' cu')
             ->select('cu.id,cu.unit_code,cu.gas_weight_kg,cu.updated_at,ct.code type_code,ct.name type_name,ct.capacity_kg')
             ->join('cylinder_types ct','ct.id=cu.cylinder_type_id')
             ->where(['cu.location_id'=>$locationId,'cu.status'=>'empty'])->orderBy('ct.sort_order')->orderBy('cu.unit_code')->get()->getResultArray();
@@ -517,7 +517,7 @@ class Dashboard extends Controller
 
         // Current stock by cylinder type (live, not date based).
         $stock = $db->query("SELECT ct.name, COALESCE(SUM(cu.status='filled'),0) filled, COALESCE(SUM(cu.status='empty'),0) empty_n, COALESCE(SUM(cu.status='custody'),0) issued, COALESCE(SUM(CASE WHEN cu.status='filled' THEN cu.gas_weight_kg END),0) gas_kg
-            FROM cylinder_types ct LEFT JOIN cylinder_units cu ON cu.cylinder_type_id=ct.id AND cu.location_id=? WHERE ct.is_active=1 GROUP BY ct.id, ct.name, ct.sort_order ORDER BY ct.sort_order", [$loc])->getResultArray();
+            FROM cylinder_types ct LEFT JOIN " . \App\Services\AsOfStock::unitsTable($loc) . " cu ON cu.cylinder_type_id=ct.id AND cu.location_id=? WHERE ct.is_active=1 GROUP BY ct.id, ct.name, ct.sort_order ORDER BY ct.sort_order", [$loc])->getResultArray();
 
         // Outstanding now: top receivables and payables.
         $customers = $db->table('customers')->where('is_active', 1)->get()->getResultArray();

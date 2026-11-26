@@ -32,6 +32,7 @@ class InventoryControlService
     {
         if($gasKg<=0) throw new RuntimeException('Wastage must be greater than zero.');
         $this->db->transBegin();
+        $tgMark = \App\Services\TimelineGuard::mark();
         try{
             $unit=$this->db->query('SELECT cu.*,ct.capacity_kg FROM cylinder_units cu JOIN cylinder_types ct ON ct.id=cu.cylinder_type_id WHERE cu.id=? AND cu.location_id=? FOR UPDATE',[$unitId,$locationId])->getRowArray();
             if(!$unit || $unit['status']!=='filled') throw new RuntimeException('Selected cylinder is not an available filled cylinder.');
@@ -41,16 +42,17 @@ class InventoryControlService
             $allowed=$policy['wastage_mode']==='fixed_kg'?(float)$policy['wastage_fixed_kg']:$current*((float)$policy['wastage_percent']/100);
             if($gasKg>$allowed+0.00001) throw new RuntimeException('Wastage exceeds the configured allowance of '.number_format($allowed, 2).' kg for this cylinder.');
             $remaining=$current-$gasKg;
-            $this->db->table('inventory_movements')->insert(['location_id'=>$locationId,'inventory_type'=>'gas_kg','cylinder_type_id'=>null,'quantity'=>$gasKg,'direction'=>'out','movement_at'=>date('Y-m-d H:i:s'),'source_type'=>'wastage','source_id'=>0,'cylinder_unit_id'=>$unitId,'created_by'=>$userId,'notes'=>$reason]);
+            $this->db->table('inventory_movements')->insert(['location_id'=>$locationId,'inventory_type'=>'gas_kg','cylinder_type_id'=>null,'quantity'=>$gasKg,'direction'=>'out','movement_at'=>\App\Services\BranchContext::now(),'source_type'=>'wastage','source_id'=>0,'cylinder_unit_id'=>$unitId,'created_by'=>$userId,'notes'=>$reason]);
             $this->db->table('inventory_wastage_logs')->insert(['location_id'=>$locationId,'cylinder_type_id'=>$unit['cylinder_type_id'],'cylinder_unit_id'=>$unitId,'gas_weight_kg'=>$gasKg,'reason'=>$reason,'created_by'=>$userId]);
             if($remaining<=0.00001){
-                $this->db->table('inventory_movements')->insert(['location_id'=>$locationId,'inventory_type'=>'filled_cylinder','cylinder_type_id'=>$unit['cylinder_type_id'],'quantity'=>1,'direction'=>'out','movement_at'=>date('Y-m-d H:i:s'),'source_type'=>'wastage','source_id'=>0,'cylinder_unit_id'=>$unitId,'created_by'=>$userId,'notes'=>$reason]);
-                $this->db->table('inventory_movements')->insert(['location_id'=>$locationId,'inventory_type'=>'empty_cylinder','cylinder_type_id'=>$unit['cylinder_type_id'],'quantity'=>1,'direction'=>'in','movement_at'=>date('Y-m-d H:i:s'),'source_type'=>'wastage','source_id'=>0,'cylinder_unit_id'=>$unitId,'created_by'=>$userId,'notes'=>'Cylinder made empty after wastage: '.$reason]);
+                $this->db->table('inventory_movements')->insert(['location_id'=>$locationId,'inventory_type'=>'filled_cylinder','cylinder_type_id'=>$unit['cylinder_type_id'],'quantity'=>1,'direction'=>'out','movement_at'=>\App\Services\BranchContext::now(),'source_type'=>'wastage','source_id'=>0,'cylinder_unit_id'=>$unitId,'created_by'=>$userId,'notes'=>$reason]);
+                $this->db->table('inventory_movements')->insert(['location_id'=>$locationId,'inventory_type'=>'empty_cylinder','cylinder_type_id'=>$unit['cylinder_type_id'],'quantity'=>1,'direction'=>'in','movement_at'=>\App\Services\BranchContext::now(),'source_type'=>'wastage','source_id'=>0,'cylinder_unit_id'=>$unitId,'created_by'=>$userId,'notes'=>'Cylinder made empty after wastage: '.$reason]);
                 $this->db->table('cylinder_units')->where('id',$unitId)->update(['status'=>'empty','gas_weight_kg'=>0]);
             }else{
                 $this->db->table('cylinder_units')->where('id',$unitId)->update(['gas_weight_kg'=>$remaining]);
             }
             if(!$this->db->transStatus()) throw new RuntimeException('Wastage posting failed.');
+            \App\Services\TimelineGuard::check($tgMark, 'this wastage entry');
             $this->db->transCommit();
         }catch(\Throwable $e){$this->db->transRollback();throw $e;}
     }

@@ -63,6 +63,7 @@ class GasDecantService
         if (!$plan) throw new RuntimeException('Enter the KG to put into at least one cylinder.');
 
         $this->db->transBegin();
+        $tgMark = \App\Services\TimelineGuard::mark();
         try {
             $ids = array_merge([$sourceId], array_keys($plan));
             sort($ids); // lock in a fixed order
@@ -94,7 +95,7 @@ class GasDecantService
                 }
             }
 
-            $now = date('Y-m-d H:i:s');
+            $now = \App\Services\BranchContext::now();
             $no = 'DC' . date('YmdHis') . '-' . random_int(100, 999);
             $srcAfter = round(max(0, $srcBefore - $total), 3);
             $this->db->table('gas_decants')->insert([
@@ -134,6 +135,7 @@ class GasDecantService
                 $this->db->table('cylinder_units')->where('id', $id)->update(['status' => 'filled', 'gas_weight_kg' => $after]);
             }
             if (!$this->db->transStatus()) throw new RuntimeException('Gas decanting could not be saved.');
+            \App\Services\TimelineGuard::check($tgMark, 'this gas decanting');
             $this->db->transCommit();
         } catch (\Throwable $e) {
             $this->db->transRollback();

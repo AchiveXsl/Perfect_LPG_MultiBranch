@@ -414,7 +414,7 @@ class InventoryOpening extends Controller
         try {
             $file->move(dirname($tempPath), basename($tempPath));
             $rows = $this->excel->readOpeningInventory($tempPath);
-            $today = date('Y-m-d');
+            $today = \App\Services\BranchContext::today();
             $db = Database::connect();
 
             $validated = [];

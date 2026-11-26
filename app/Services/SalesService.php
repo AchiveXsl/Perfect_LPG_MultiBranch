@@ -61,13 +61,13 @@ class SalesService
     protected function postHeaderTransaction(array $payload,int $userId,int $locationId,string $headerType): array
     {
         $customerId=!empty($payload['customer_id'])?(int)$payload['customer_id']:null;
-        $transactionAt=str_replace('T',' ',trim((string)($payload['transaction_at']??date('Y-m-d H:i:s'))));
+        $transactionAt=str_replace('T',' ',trim((string)($payload['transaction_at']??\App\Services\BranchContext::now())));
         $transactionTs=strtotime($transactionAt);
         if($transactionTs===false) throw new RuntimeException('Invalid transaction date/time.');
-        if($transactionTs>time()+self::FUTURE_GRACE_SECONDS) throw new RuntimeException('Transaction date/time cannot be in the future.');
+        if($transactionTs>\App\Services\BranchContext::nowTs()+self::FUTURE_GRACE_SECONDS) throw new RuntimeException('Transaction date/time cannot be in the future.');
         $transactionTs=RateResolver::pricingTime($transactionTs);
         $transactionAt=date('Y-m-d H:i:s',$transactionTs);
-        $this->backdated=$transactionTs<time()-self::BACKDATE_GRACE_SECONDS;
+        $this->backdated=$transactionTs<\App\Services\BranchContext::nowTs()-self::BACKDATE_GRACE_SECONDS;
         $this->backdatedPriceDiffers=false;
         $notes=trim((string)($payload['notes']??''))?:null;
         $lines=is_array($payload['lines']??null)?$payload['lines']:[];
@@ -105,7 +105,7 @@ class SalesService
     {
         $price=$this->resolver->$method($this->priceList,$type,$at);
         if($this->backdated && !$this->backdatedPriceDiffers){
-            $now=$this->resolver->$method($this->priceList,$type,date('Y-m-d H:i:s'));
+            $now=$this->resolver->$method($this->priceList,$type,\App\Services\BranchContext::now());
             $this->backdatedPriceDiffers=($price['rate']===null)!==($now['rate']===null)
                 || ($price['rate']!==null && abs($price['rate']-$now['rate'])>0.00001);
         }
@@ -240,6 +240,7 @@ class SalesService
         $total=$subtotal-$discount;
 
         $this->db->transBegin();
+        $tgMark = \App\Services\TimelineGuard::mark();
         try{
             if($customerId){
                 $locked=$this->db->query("SELECT * FROM customers WHERE id=? FOR UPDATE",[$customerId])->getRowArray();
@@ -330,7 +331,7 @@ class SalesService
                     $autoUnits=$this->db->query(
                         "SELECT cu.*,ct.code cylinder_code,ct.name cylinder_name,ct.capacity_kg
                          FROM cylinder_units cu JOIN cylinder_types ct ON ct.id=cu.cylinder_type_id
-                         WHERE cu.location_id=? AND cu.cylinder_type_id=? AND cu.status='filled' AND cu.gas_weight_kg>0
+                         WHERE cu.location_id=? AND cu.cylinder_type_id=? AND cu.status='filled' AND cu.gas_weight_kg>0".\App\Services\TimelineGuard::freeAtSql('cu',$transactionAt)."
                          ORDER BY cu.id FOR UPDATE",
                         [$locationId,$row['type_id']]
                     )->getResultArray();
@@ -382,6 +383,7 @@ class SalesService
             if(!$this->db->transStatus()) throw new RuntimeException('Gas sale posting failed.');
             (new CostService())->costSale($saleId,$locationId);
             if(!$this->db->transStatus()) throw new RuntimeException('Cost calculation failed.');
+            \App\Services\TimelineGuard::check($tgMark, 'this sale');
             $this->db->transCommit();$this->releaseInventoryLocks();
             return ['id'=>$saleId,'sale_no'=>$saleNo,'total'=>$total,'customer_id'=>$customerId,'credit_amount'=>$paymentPlan['credit_amount']];
         }catch(\Throwable $e){
@@ -452,6 +454,7 @@ class SalesService
         $customRate=$customRate||$this->backdatedPriceDiffers;
 
         $this->db->transBegin();
+        $tgMark = \App\Services\TimelineGuard::mark();
         try{
             $customer=null;
             if($customerId){
@@ -576,6 +579,7 @@ class SalesService
             if(!$this->db->transStatus()) throw new RuntimeException('Cylinder sale posting failed.');
             (new CostService())->costSale($saleId,$locationId);
             if(!$this->db->transStatus()) throw new RuntimeException('Cost calculation failed.');
+            \App\Services\TimelineGuard::check($tgMark, 'this sale');
             $this->db->transCommit();$this->releaseInventoryLocks();
             return ['id'=>$saleId,'sale_no'=>$saleNo,'total'=>$total,'customer_id'=>$customerId,'credit_amount'=>$paymentPlan['credit_amount']];
         }catch(\Throwable $e){
@@ -735,6 +739,7 @@ class SalesService
             if($combinedPayments)throw new RuntimeException('Manual allocation requires separate payment rows.');
         }
         $this->db->transBegin();
+        $tgMark = \App\Services\TimelineGuard::mark();
         try{
             $lockKeys=array_map(static fn($x)=>['type'=>$x['status']==='filled'?'filled_cylinder':'empty_cylinder','cylinder_type_id'=>(int)$x['row']['cylinder_type_id']],$prepared);
             foreach(array_keys($returnByType) as $rtid)$lockKeys[]=['type'=>'empty_cylinder','cylinder_type_id'=>(int)$rtid];
@@ -821,6 +826,7 @@ class SalesService
             if(!$this->db->transStatus())throw new RuntimeException('Security deposit / cylinder issue failed.');
             (new CostService())->costSale($saleId,$locationId);
             if(!$this->db->transStatus()) throw new RuntimeException('Cost calculation failed.');
+            \App\Services\TimelineGuard::check($tgMark, 'this security deposit');
             $this->db->transCommit();$this->releaseInventoryLocks();
             return ['id'=>$saleId,'sale_no'=>$saleNo,'total'=>$chargeTotal,'customer_id'=>$customerId,'credit_amount'=>$paymentPlan['credit_amount']];
         }catch(\Throwable $e){$this->releaseInventoryLocks();$this->db->transRollback();throw $e;}
@@ -900,6 +906,7 @@ class SalesService
         $returnLedger=$affectsOs?round($returnLedger,2):0;
 
         $this->db->transBegin();
+        $tgMark = \App\Services\TimelineGuard::mark();
         try{
             foreach($selected as $id){
                 $locked=$this->db->query("SELECT cu.*,ct.capacity_kg FROM cylinder_units cu JOIN cylinder_types ct ON ct.id=cu.cylinder_type_id JOIN cylinder_custody cc ON cc.cylinder_unit_id=cu.id AND cc.status='issued' WHERE cu.id=? AND cc.customer_id=? FOR UPDATE",[$id,$customerId])->getRowArray();
@@ -949,6 +956,7 @@ class SalesService
                 }
             }
             if(!$this->db->transStatus())throw new RuntimeException('Cylinder return failed.');
+            \App\Services\TimelineGuard::check($tgMark, 'this cylinder return');
             $this->db->transCommit();
             return ['id'=>$saleId,'sale_no'=>$saleNo,'total'=>0,'customer_id'=>$customerId,'credit_amount'=>0];
         }catch(\Throwable $e){$this->db->transRollback();throw $e;}
@@ -1162,7 +1170,7 @@ class SalesService
                 foreach($cashRows as $cash){
                     $this->db->table('cash_transactions')->insert([
                         'cash_session_id'=>$cash['cash_session_id'],'transaction_type'=>'customer_receipt','direction'=>'out',
-                        'amount'=>$cash['amount'],'transaction_at'=>date('Y-m-d H:i:s'),'reference_type'=>'customer_receipt_void','reference_id'=>$receiptId,
+                        'amount'=>$cash['amount'],'transaction_at'=>\App\Services\BranchContext::now(),'reference_type'=>'customer_receipt_void','reference_id'=>$receiptId,
                         'created_by'=>$userId,'notes'=>'Cash reversal of voided customer receipt '.$rec['receipt_no']
                     ]);
                 }
@@ -1182,6 +1190,7 @@ class SalesService
         $reason=trim($reason);
         if($reason==='') throw new RuntimeException('Void reason is required.');
         $this->db->transBegin();
+        $tgMark = \App\Services\TimelineGuard::mark();
         try{
             $sale=$this->db->query("SELECT * FROM sales WHERE id=? AND location_id=? FOR UPDATE",[$saleId,$locationId])->getRowArray();
             if(!$sale) throw new RuntimeException('Sale not found.');
@@ -1227,7 +1236,7 @@ class SalesService
                 $reverse=$m['direction']==='in'?'out':'in';
                 $this->db->table('inventory_movements')->insert([
                     'location_id'=>$m['location_id'],'inventory_type'=>$m['inventory_type'],'cylinder_type_id'=>$m['cylinder_type_id'],
-                    'quantity'=>$m['quantity'],'direction'=>$reverse,'movement_at'=>date('Y-m-d H:i:s'),
+                    'quantity'=>$m['quantity'],'direction'=>$reverse,'movement_at'=>\App\Services\BranchContext::now(),
                     'source_type'=>'sale_void','source_id'=>$saleId,'source_line_id'=>$m['source_line_id']??null,
                     'cylinder_unit_id'=>$m['cylinder_unit_id']??null,'created_by'=>$userId,
                     'notes'=>'Reversal of sale '.$sale['sale_no']
@@ -1262,7 +1271,7 @@ class SalesService
             foreach($cashRows as $cash){
                 $this->db->table('cash_transactions')->insert([
                     'cash_session_id'=>$cash['cash_session_id'],'transaction_type'=>'sale_cash','direction'=>'out',
-                    'amount'=>$cash['amount'],'transaction_at'=>date('Y-m-d H:i:s'),'reference_type'=>'sale_void',
+                    'amount'=>$cash['amount'],'transaction_at'=>\App\Services\BranchContext::now(),'reference_type'=>'sale_void',
                     'reference_id'=>$saleId,'created_by'=>$userId,'notes'=>'Cash reversal of sale '.$sale['sale_no']
                 ]);
             }
@@ -1299,7 +1308,7 @@ class SalesService
                             'transaction_type'=>'customer_receipt',
                             'direction'=>'out',
                             'amount'=>$receiptCash['amount'],
-                            'transaction_at'=>date('Y-m-d H:i:s'),
+                            'transaction_at'=>\App\Services\BranchContext::now(),
                             'reference_type'=>'sale_void',
                             'reference_id'=>$saleId,
                             'created_by'=>$userId,
@@ -1310,8 +1319,9 @@ class SalesService
             }
 
             (new CostService())->reverseSale($saleId);
-            $this->db->table('sales')->where('id',$saleId)->update(['status'=>'voided','voided_by'=>$userId,'voided_at'=>date('Y-m-d H:i:s'),'void_reason'=>$reason]);
+            $this->db->table('sales')->where('id',$saleId)->update(['status'=>'voided','voided_by'=>$userId,'voided_at'=>\App\Services\BranchContext::now(),'void_reason'=>$reason]);
             if(!$this->db->transStatus()) throw new RuntimeException('Sale void failed.');
+            \App\Services\TimelineGuard::check($tgMark, 'this void');
             $this->db->transCommit();
             $this->releaseInventoryLocks();
             return $sale['sale_no'];
@@ -1337,7 +1347,7 @@ class SalesService
         $saleId=(int)$sale['id'];
         $customerId=(int)$sale['customer_id'];
         $no=(string)$sale['sale_no'];
-        $now=date('Y-m-d H:i:s');
+        $now=\App\Services\BranchContext::now();
         $this->db->query('SELECT id FROM customers WHERE id=? FOR UPDATE',[$customerId]);
 
         $movements=$this->db->table('inventory_movements')->where('source_id',$saleId)
@@ -1439,25 +1449,30 @@ class SalesService
      * @param array<int,array<string,mixed>> $customers rows containing at least id and opening_balance
      * @return array<int,float>
      */
-    public function customerBalances(array $customers): array
+    /**
+     * Customer OS as of $asOf (default: end of the branch System Date), so a back-dated System Date shows
+     * the balances of that day. Entries dated later are left out.
+     */
+    public function customerBalances(array $customers, ?string $asOf=null): array
     {
         if(!$customers)return [];
         $locationId=(int)$this->currentLocationId;
+        $asOf=$asOf??(\App\Services\BranchContext::today($locationId).' 23:59:59');
         $sales=[];
         foreach($this->db->table('sales')->select('customer_id,SUM(credit_amount) AS credit,SUM(return_gas_ledger_amount) AS return_ledger')
-            ->where('location_id',$locationId)->where('status','posted')->where('customer_id IS NOT NULL',null,false)->groupBy('customer_id')->get()->getResultArray() as $r){
+            ->where('location_id',$locationId)->where('status','posted')->where('transaction_at <=',$asOf)->where('customer_id IS NOT NULL',null,false)->groupBy('customer_id')->get()->getResultArray() as $r){
             $sales[(int)$r['customer_id']]=(float)$r['credit']+(float)$r['return_ledger'];
         }
         $paid=[];
         foreach($this->db->table('customer_receipts')->select('customer_id,SUM(amount) AS paid')
-            ->where('location_id',$locationId)->where('status','posted')->groupBy('customer_id')->get()->getResultArray() as $r){
+            ->where('location_id',$locationId)->where('status','posted')->where('receipt_at <=',$asOf)->groupBy('customer_id')->get()->getResultArray() as $r){
             $paid[(int)$r['customer_id']]=(float)$r['paid'];
         }
         $deposits=[];
         $settings=(new ShopSettingsModel())->forLocation($locationId);
         if((int)($settings['include_security_deposit_in_os']??0)===1){
             foreach($this->db->table('customer_security_deposits')->select("customer_id,SUM(CASE WHEN entry_type='hold' THEN amount ELSE -amount END) AS balance")
-                ->where('location_id',$locationId)->groupBy('customer_id')->get()->getResultArray() as $r){
+                ->where('location_id',$locationId)->where('transaction_at <=',$asOf)->groupBy('customer_id')->get()->getResultArray() as $r){
                 $deposits[(int)$r['customer_id']]=max(0,(float)$r['balance']);
             }
         }

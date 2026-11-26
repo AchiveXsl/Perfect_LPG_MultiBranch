@@ -45,7 +45,7 @@ class Rates extends Controller
     {
         if($r=$this->guard()) return $r;
         $locationId=$this->locationId();
-        $now=date('Y-m-d H:i:s');
+        $now=\App\Services\BranchContext::now();
         $settings=(new ShopSettingsModel())->forLocation($locationId);
         $types=$this->activeTypes();
         $resolver=new RateResolver($locationId,$settings);
@@ -138,9 +138,9 @@ class Rates extends Controller
         if($ts===false) return $back->withInput()->with('error','Enter a valid Effective From date and time.');
         // A rate cannot start in the past, which would rewrite which price was in force.
         // A time up to an hour old is the form's "now" default from when the page was opened.
-        if($ts<time()){
-            if($ts<time()-self::PAST_GRACE_SECONDS) return $back->withInput()->with('error','Effective From cannot be in the past. Use the current time or a future time.');
-            $ts=time();
+        if($ts<\App\Services\BranchContext::nowTs()){
+            if($ts<\App\Services\BranchContext::nowTs()-self::PAST_GRACE_SECONDS) return $back->withInput()->with('error','Effective From cannot be in the past. Use the current time or a future time.');
+            $ts=\App\Services\BranchContext::nowTs();
         }
         $effective=date('Y-m-d H:i:s',$ts);
         $reason=trim((string)$this->request->getPost('reason'))?:null;
@@ -173,7 +173,7 @@ class Rates extends Controller
             $log=new RateChangeLogModel();
             foreach($changes as $c){
                 $row=['location_id'=>$locationId,'rate_type'=>$c['item'],'cylinder_type_id'=>$c['type_id'],'rate_value'=>$c['value'],
-                    'effective_from'=>$effective,'created_by'=>$this->userId(),'created_at'=>date('Y-m-d H:i:s')]+$key;
+                    'effective_from'=>$effective,'created_by'=>$this->userId(),'created_at'=>\App\Services\BranchContext::realNow()]+$key;
                 $rateId=(int)$model->insert($row,true);
                 if($rateId<=0) throw new \RuntimeException('Rate could not be saved.');
                 $log->insert($this->logRow($entity,$rateId,$locationId,$row,$c['old'],$c['value'],$reason));
@@ -218,7 +218,7 @@ class Rates extends Controller
     private function stopRow($model, array $row, $scope, $back, string $entity)
     {
         $locationId=$this->locationId();
-        $now=date('Y-m-d H:i:s');
+        $now=\App\Services\BranchContext::now();
         $id=(int)$row['id'];
         $current=$model->effectiveRow($locationId,$scope,$row['rate_type'],$row['cylinder_type_id']!==null?(int)$row['cylinder_type_id']:null,$now);
         if(!$current || (int)$current['id']!==$id) return $back->with('error','Only the price currently in force can be stopped.');
@@ -252,7 +252,7 @@ class Rates extends Controller
     {
         $locationId=$this->locationId();
         $id=(int)$row['id'];
-        if($row['effective_from']<=date('Y-m-d H:i:s')) return $back->with('error','Only a scheduled rate that has not started can be cancelled. To change a price in force, save a new price.');
+        if($row['effective_from']<=\App\Services\BranchContext::now()) return $back->with('error','Only a scheduled rate that has not started can be cancelled. To change a price in force, save a new price.');
 
         return $this->changeInTransaction($back,function() use ($model,$row,$id,$locationId,$entity){
             (new RateChangeLogModel())->insert($this->logRow($entity,null,$locationId,$row,$row['rate_value'],0,'Scheduled rate cancelled (was due '.$row['effective_from'].')'));
