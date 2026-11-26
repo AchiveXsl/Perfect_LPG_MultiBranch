@@ -56,7 +56,7 @@ document.addEventListener('DOMContentLoaded', function () {
     </div>
     <div class="col-md-2">
       <label class="form-label fw-semibold">Receive Date</label>
-      <input name="receive_date" id="receiveDate" type="date" class="form-control" value="<?= esc(old('receive_date') ?: date('Y-m-d'), 'attr') ?>" max="<?= date('Y-m-d') ?>" required>
+      <input name="receive_date" id="receiveDate" type="date" class="form-control" value="<?= esc(old('receive_date') ?: \App\Services\BranchContext::today(), 'attr') ?>" max="<?= \App\Services\BranchContext::today() ?>" required>
     </div>
     <div class="col-md-2">
       <label class="form-label fw-semibold">Payment Mode</label>

@@ -414,7 +414,7 @@ $initialTransactionType = in_array((string)$defaultTransactionType, $posVisibleT
   </div>
   <div class="col-md-3">
     <label class="form-label">Transaction Time</label>
-    <input name="transaction_at" type="datetime-local" class="form-control" value="<?=date('Y-m-d\TH:i')?>">
+    <input name="transaction_at" type="datetime-local" class="form-control" value="<?=\App\Services\BranchContext::nowLocal()?>">
   </div>
   <div class="col-12">
     <div id="customerCreditStatus" class="small mt-1 text-muted">Walk-in / Cash: credit sale not allowed.</div>
@@ -966,7 +966,9 @@ function resetTransactionFormState(){
   if(timeInput){
     const now=new Date();
     const pad=n=>String(n).padStart(2,'0');
-    timeInput.value=now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate())+'T'+pad(now.getHours())+':'+pad(now.getMinutes());
+    // The date is the branch System Date, the time is the clock.
+    const sysDate=window.lpgSystemDate||(now.getFullYear()+'-'+pad(now.getMonth()+1)+'-'+pad(now.getDate()));
+    timeInput.value=sysDate+'T'+pad(now.getHours())+':'+pad(now.getMinutes());
   }
 
   // Close any open cylinder picker so old selections cannot remain visible.

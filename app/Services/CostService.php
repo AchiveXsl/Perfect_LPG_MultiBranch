@@ -216,7 +216,7 @@ class CostService
     public function transferIn(int $locationId, string $kind, ?int $typeId, string $sourceType, int $transferId, int $itemId, float $qty, float $unitCost): void
     {
         if ($qty <= 0.00001) return;
-        $this->insertLayer($locationId, $kind, $typeId, $sourceType, $transferId, $itemId, date('Y-m-d H:i:s'), $qty, $unitCost, true);
+        $this->insertLayer($locationId, $kind, $typeId, $sourceType, $transferId, $itemId, \App\Services\BranchContext::now(), $qty, $unitCost, true);
     }
 
     protected function lastUnitCost(int $locationId, string $kind, ?int $typeId): float

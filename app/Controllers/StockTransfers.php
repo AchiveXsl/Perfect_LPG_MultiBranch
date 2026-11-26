@@ -27,8 +27,8 @@ class StockTransfers extends Controller
         $loc = BranchContext::currentId();
         // Date filter on the dispatch date, default the current month. In-transit transfers always show.
         $valid = static fn($v) => is_string($v) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $v) && strtotime($v) !== false;
-        $from = $valid($this->request->getGet('from')) ? $this->request->getGet('from') : date('Y-m-01');
-        $to = $valid($this->request->getGet('to')) ? $this->request->getGet('to') : date('Y-m-d');
+        $from = $valid($this->request->getGet('from')) ? $this->request->getGet('from') : substr(\App\Services\BranchContext::today(),0,8).'01';
+        $to = $valid($this->request->getGet('to')) ? $this->request->getGet('to') : \App\Services\BranchContext::today();
         if ($from > $to) [$from, $to] = [$to, $from];
         $rows = (new StockTransferService())->listFor($loc, 2000, $from, $to);
         return view('stock_transfers/index', [

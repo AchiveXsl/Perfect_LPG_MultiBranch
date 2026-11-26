@@ -211,4 +211,79 @@ class BranchContext
         $ids = array_values(array_intersect(array_map('intval', (array) $requested), $allowed));
         return $ids ?: ($current > 0 ? [$current] : []);
     }
+
+    // ------------------------------------------------------------------
+    // System Date (owner decision 2026-11-26)
+    //
+    // Each branch has a System Date (locations.system_date, migration 054). Every transaction of the
+    // branch is dated with it plus the current clock time, and screens and reports default to it.
+    // NULL means the branch follows the real date. created_at columns keep the real entry time.
+    // Use now() / today() / nowTs() for anything that dates or filters business data;
+    // use realNow() only for technical timestamps (logins, sync, backups).
+    // ------------------------------------------------------------------
+
+    /** @var array<int,?string> */
+    protected static array $systemDateCache = [];
+
+    /** The stored System Date of a branch (Y-m-d), or null when it follows the real date. */
+    public static function storedSystemDate(?int $locationId = null): ?string
+    {
+        $locationId = $locationId ?? (is_cli() ? 0 : self::currentId());
+        if ($locationId <= 0) {
+            return null;
+        }
+        if (!array_key_exists($locationId, self::$systemDateCache)) {
+            $value = null;
+            try {
+                $row = Database::connect()->table('locations')->select('system_date')->where('id', $locationId)->get()->getRowArray();
+                $value = $row['system_date'] ?? null;
+            } catch (\Throwable $e) {
+                $value = null; // column not migrated yet
+            }
+            self::$systemDateCache[$locationId] = ($value && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) $value)) ? (string) $value : null;
+        }
+        return self::$systemDateCache[$locationId];
+    }
+
+    /** The branch's working date (Y-m-d): its System Date, or the real date. */
+    public static function today(?int $locationId = null): string
+    {
+        return self::storedSystemDate($locationId) ?? date('Y-m-d');
+    }
+
+    /** The branch's working date and time: System Date plus the current clock time. */
+    public static function now(?int $locationId = null): string
+    {
+        return self::today($locationId) . ' ' . date('H:i:s');
+    }
+
+    /** now() in the form a datetime-local input takes (Y-m-dTH:i). */
+    public static function nowLocal(?int $locationId = null): string
+    {
+        return str_replace(' ', 'T', substr(self::now($locationId), 0, 16));
+    }
+
+    public static function nowTs(?int $locationId = null): int
+    {
+        return (int) strtotime(self::now($locationId));
+    }
+
+    /** Real clock time, for technical timestamps only. */
+    public static function realNow(): string
+    {
+        return date('Y-m-d H:i:s');
+    }
+
+    /** True when the branch works on a date other than the real date. */
+    public static function isShifted(?int $locationId = null): bool
+    {
+        return self::today($locationId) !== date('Y-m-d');
+    }
+
+    /** Save (or clear with null) a branch's System Date. */
+    public static function setSystemDate(int $locationId, ?string $date): void
+    {
+        Database::connect()->table('locations')->where('id', $locationId)->update(['system_date' => $date]);
+        self::$systemDateCache[$locationId] = $date;
+    }
 }

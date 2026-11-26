@@ -57,12 +57,13 @@ class CylinderFillService
         if (!$toFull && $notes === null) throw new RuntimeException('Enter the reason for emptying these cylinders.');
 
         $this->db->transBegin();
+        $tgMark = \App\Services\TimelineGuard::mark();
         try {
             // Locks every candidate of this type, so two users cannot convert the same cylinders.
             $sources = $this->db->query(
                 $toFull
-                    ? "SELECT id,gas_weight_kg FROM cylinder_units WHERE location_id=? AND cylinder_type_id=? AND status='empty' ORDER BY id FOR UPDATE"
-                    : "SELECT id,gas_weight_kg FROM cylinder_units WHERE location_id=? AND cylinder_type_id=? AND status='filled' ORDER BY gas_weight_kg DESC,id DESC FOR UPDATE",
+                    ? "SELECT id,gas_weight_kg FROM cylinder_units cu WHERE location_id=? AND cylinder_type_id=? AND status='empty'" . \App\Services\TimelineGuard::freeAtSql('cu', \App\Services\BranchContext::now()) . " ORDER BY id FOR UPDATE"
+                    : "SELECT id,gas_weight_kg FROM cylinder_units cu WHERE location_id=? AND cylinder_type_id=? AND status='filled'" . \App\Services\TimelineGuard::freeAtSql('cu', \App\Services\BranchContext::now()) . " ORDER BY gas_weight_kg DESC,id DESC FOR UPDATE",
                 [$locationId, $typeId]
             )->getResultArray();
             $available = count($sources);
@@ -73,7 +74,7 @@ class CylinderFillService
 
             $chosen = array_slice($sources, 0, $count);
             $totalGas = $toFull ? round($capacity * $count, 3) : round(array_sum(array_map(static fn($u) => (float)$u['gas_weight_kg'], $chosen)), 3);
-            $now = date('Y-m-d H:i:s');
+            $now = \App\Services\BranchContext::now();
             $this->db->table('cylinder_fills')->insert([
                 'location_id' => $locationId, 'direction' => $direction, 'cylinder_type_id' => $typeId, 'quantity' => $count, 'total_gas_kg' => $totalGas,
                 'empty_before' => $emptyBefore, 'empty_after' => $emptyBefore + ($toFull ? -$count : $count),
@@ -101,6 +102,7 @@ class CylinderFillService
             }
             AuditService::log('CREATE', 'cylinder_fill', $fillId, null, ['direction' => $direction, 'cylinder_type_id' => $typeId, 'quantity' => $count, 'total_gas_kg' => $totalGas, 'notes' => $notes], $userId, $locationId);
             if (!$this->db->transStatus()) throw new RuntimeException('Cylinders could not be converted.');
+            \App\Services\TimelineGuard::check($tgMark, 'this fill / empty entry');
             $this->db->transCommit();
             return ['quantity' => $count, 'direction' => $direction, 'total_gas' => $totalGas];
         } catch (\Throwable $e) {

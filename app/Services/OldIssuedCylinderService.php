@@ -32,7 +32,7 @@ class OldIssuedCylinderService
         $date = trim((string)($row['issued_on'] ?? ''));
         $parsed = \DateTimeImmutable::createFromFormat('!Y-m-d', $date);
         if (!$parsed || $parsed->format('Y-m-d') !== $date) throw new RuntimeException('Enter a valid date.');
-        if ($date > ($today ?? date('Y-m-d'))) throw new RuntimeException('The date cannot be in the future.');
+        if ($date > ($today ?? \App\Services\BranchContext::today())) throw new RuntimeException('The date cannot be in the future.');
         $customerId = (int)($row['customer_id'] ?? 0);
         if ($customerId <= 0) throw new RuntimeException('Select a customer.');
         $typeId = (int)($row['cylinder_type_id'] ?? 0);
@@ -68,6 +68,7 @@ class OldIssuedCylinderService
         $note = mb_substr(trim($note), 0, 255) ?: null;
 
         $this->db->transBegin();
+        $tgMark = \App\Services\TimelineGuard::mark();
         try {
             $cylinderCount = 0;
             $outstandingTotal = 0.0;
@@ -80,7 +81,7 @@ class OldIssuedCylinderService
                 $capacity = (float)($type['capacity_kg'] ?? 0);
                 if (!$type || $capacity <= 0) throw new RuntimeException('Row ' . ($i + 1) . ': Cylinder type is unavailable.');
 
-                $this->db->table('old_issued_cylinders')->insert($row + ['location_id' => $locationId, 'status' => 'posted', 'created_by' => $userId, 'created_at' => date('Y-m-d H:i:s')]);
+                $this->db->table('old_issued_cylinders')->insert($row + ['location_id' => $locationId, 'status' => 'posted', 'created_by' => $userId, 'created_at' => \App\Services\BranchContext::realNow()]);
                 $entryId = (int)$this->db->insertID();
                 if ($entryId <= 0) throw new RuntimeException('Old issued cylinders could not be saved.');
 
@@ -101,6 +102,7 @@ class OldIssuedCylinderService
                 $outstandingTotal += $row['outstanding'];
             }
             if (!$this->db->transStatus()) throw new RuntimeException('Old issued cylinders could not be saved.');
+            \App\Services\TimelineGuard::check($tgMark, 'this old issued cylinder entry');
             $this->db->transCommit();
             return ['rows' => count($clean), 'cylinders' => $cylinderCount, 'outstanding' => round($outstandingTotal, 2)];
         } catch (\Throwable $e) {
@@ -116,6 +118,7 @@ class OldIssuedCylinderService
         if ($reason === '') throw new RuntimeException('Enter the reason for voiding this entry.');
 
         $this->db->transBegin();
+        $tgMark = \App\Services\TimelineGuard::mark();
         try {
             $entry = $this->db->query('SELECT * FROM old_issued_cylinders WHERE id=? AND location_id=? FOR UPDATE', [$entryId, $locationId])->getRowArray();
             if (!$entry) throw new RuntimeException('Entry not found.');
@@ -130,7 +133,7 @@ class OldIssuedCylinderService
             if ($stillIssued !== count($unitIds) || $everCustody !== count($unitIds)) throw new RuntimeException('This entry cannot be voided because one or more of its cylinders has been returned.');
             if ($this->db->table('sale_items')->whereIn('customer_cylinder_unit_id', $unitIds)->countAllResults() > 0) throw new RuntimeException('This entry cannot be voided because one or more of its cylinders has been used in a sale.');
 
-            $now = date('Y-m-d H:i:s');
+            $now = \App\Services\BranchContext::now();
             $this->db->table('cylinder_custody')->whereIn('cylinder_unit_id', $unitIds)->update(['status' => 'voided', 'updated_by' => $userId]);
             $this->db->table('cylinder_units')->whereIn('id', $unitIds)->update(['status' => 'voided', 'custody_customer_id' => null, 'gas_weight_kg' => 0]);
             if ((float)$entry['outstanding'] > 0) {
@@ -139,6 +142,7 @@ class OldIssuedCylinderService
             $this->db->table('old_issued_cylinders')->where('id', $entryId)->update(['status' => 'voided', 'void_reason' => $reason, 'voided_by' => $userId, 'voided_at' => $now]);
             AuditService::log('VOID', 'old_issued_cylinder', $entryId, $entry, ['status' => 'voided', 'void_reason' => $reason], $userId, $locationId);
             if (!$this->db->transStatus()) throw new RuntimeException('This entry could not be voided.');
+            \App\Services\TimelineGuard::check($tgMark, 'this void');
             $this->db->transCommit();
         } catch (\Throwable $e) {
             $this->db->transRollback();

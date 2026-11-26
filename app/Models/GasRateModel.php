@@ -14,7 +14,7 @@ class GasRateModel extends RateCardModel
 
     public function effectiveRow(int $locationId, string $priceList, string $rateType, ?int $cylinderTypeId, ?string $asOf=null): ?array
     {
-        $at=$asOf??date('Y-m-d H:i:s');
+        $at=$asOf??\App\Services\BranchContext::now();
         $row=$this->forKey($locationId,$priceList,$rateType,$cylinderTypeId)->where('effective_from <=',$at)->orderBy('effective_from','DESC')->orderBy('id','DESC')->first();
         if(!$row || ($row['effective_to']!==null && $row['effective_to']<=$at)) return null;
         return $row;
@@ -29,6 +29,6 @@ class GasRateModel extends RateCardModel
     /** The next scheduled rate after $asOf, if any. */
     public function nextRow(int $locationId, string $priceList, string $rateType, ?int $cylinderTypeId, ?string $asOf=null): ?array
     {
-        return $this->forKey($locationId,$priceList,$rateType,$cylinderTypeId)->where('effective_from >',$asOf??date('Y-m-d H:i:s'))->orderBy('effective_from','ASC')->orderBy('id','ASC')->first();
+        return $this->forKey($locationId,$priceList,$rateType,$cylinderTypeId)->where('effective_from >',$asOf??\App\Services\BranchContext::now())->orderBy('effective_from','ASC')->orderBy('id','ASC')->first();
     }
 }

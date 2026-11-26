@@ -36,7 +36,7 @@ $cellInput = static function (string $name, array $cell, ?float $fallbackRate, s
 // The save bar under every grid: Effective From, reason and the Save button.
 $saveBar = static function (string $buttonText): string {
     return '<div class="rate-save-bar row g-2 align-items-end border-top pt-3 mt-3">'
-        . '<div class="col-sm-6 col-lg-3"><label class="form-label mb-1">Effective From</label><input name="effective_from" type="datetime-local" class="form-control" value="' . date('Y-m-d\TH:i') . '" min="' . date('Y-m-d\TH:i') . '" required></div>'
+        . '<div class="col-sm-6 col-lg-3"><label class="form-label mb-1">Effective From</label><input name="effective_from" type="datetime-local" class="form-control" value="' . \App\Services\BranchContext::nowLocal() . '" min="' . \App\Services\BranchContext::nowLocal() . '" required></div>'
         . '<div class="col-sm-6 col-lg-6"><label class="form-label mb-1">Reason</label><input name="reason" class="form-control" maxlength="255" placeholder="For example: plant price increase"></div>'
         . '<div class="col-lg-3"><button class="btn btn-primary w-100 rate-save" type="submit">' . esc($buttonText) . '</button></div>'
         . '</div>';

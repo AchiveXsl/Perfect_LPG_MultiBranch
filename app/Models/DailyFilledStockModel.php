@@ -33,7 +33,7 @@ class DailyFilledStockModel extends Model
      */
     public function totalUnitsForDate(?string $date = null): int
     {
-        $date = $date ?? date('Y-m-d');
+        $date = $date ?? \App\Services\BranchContext::today();
 
         $row = $this->selectSum('closing_stock', 'total')
             ->where('stock_date', $date)
@@ -47,7 +47,7 @@ class DailyFilledStockModel extends Model
      */
     public function totalWeightKgForDate(?string $date = null): float
     {
-        $date = $date ?? date('Y-m-d');
+        $date = $date ?? \App\Services\BranchContext::today();
 
         $row = $this->select('SUM(daily_filled_stock.closing_stock * cylinder_types.capacity_kg) AS total_kg')
             ->join('cylinder_types', 'cylinder_types.id = daily_filled_stock.cylinder_type_id')

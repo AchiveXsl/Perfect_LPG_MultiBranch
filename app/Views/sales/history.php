@@ -24,8 +24,8 @@ document.addEventListener('DOMContentLoaded',function(){var o=document.getElemen
 
 <div id="saleHistoryPanel">
   <div class="card mb-2"><div class="card-body py-2"><div class="row g-2 align-items-end">
-    <div class="col-md-2"><label class="form-label">From Date</label><input type="date" id="historyFrom" class="form-control" value="<?=date('Y-m-d')?>"></div>
-    <div class="col-md-2"><label class="form-label">To Date</label><input type="date" id="historyTo" class="form-control" value="<?=date('Y-m-d')?>"></div>
+    <div class="col-md-2"><label class="form-label">From Date</label><input type="date" id="historyFrom" class="form-control" value="<?=\App\Services\BranchContext::today()?>"></div>
+    <div class="col-md-2"><label class="form-label">To Date</label><input type="date" id="historyTo" class="form-control" value="<?=\App\Services\BranchContext::today()?>"></div>
     <div class="col-md-2"><label class="form-label">Sale No.</label><input type="text" id="historySaleNo" class="form-control" placeholder="Sale number"></div>
     <div class="col-md-2"><label class="form-label">Customer</label><input type="text" id="historyCustomer" class="form-control" placeholder="Name / code"></div>
     <div class="col-md-2"><label class="form-label">Transaction Type</label><select id="historyType" class="form-select"><option value="">All Types</option><option value="gas_sale">Gas Sale</option><option value="cylinder_sale">Cylinder Sale</option><option value="security_deposit">Security Deposit</option><option value="cylinder_return">Cylinder Return</option><option value="refill_service">Refill Service</option><option value="cylinder_exchange">Cylinder Exchange</option><option value="filled_cylinder">Filled Cylinder</option><option value="empty_sale">Empty Cylinder</option><option value="mixed">Mixed</option></select></div>

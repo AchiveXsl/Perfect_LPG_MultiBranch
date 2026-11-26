@@ -143,7 +143,7 @@
             <div class="modal-body">
                 <div class="mb-3">
                     <label class="form-label">Inventory Date</label>
-                    <input name="inventory_date" id="inventoryDate" type="date" value="<?= date('Y-m-d') ?>" class="form-control" required>
+                    <input name="inventory_date" id="inventoryDate" type="date" value="<?= \App\Services\BranchContext::today() ?>" class="form-control" required>
                 </div>
 
                 <div class="mb-3">
@@ -220,7 +220,7 @@ function updateCylinderStatus() {
 function prepareAdd() {
     document.getElementById('formTitle').textContent = 'Add Opening Inventory';
     document.getElementById('openingId').value = '';
-    document.getElementById('inventoryDate').value = '<?= date('Y-m-d') ?>';
+    document.getElementById('inventoryDate').value = '<?= \App\Services\BranchContext::today() ?>';
     document.getElementById('cylinderTypeId').value = '';
     document.getElementById('quantity').value = '';
     document.getElementById('actualGasWeight').value = '0';

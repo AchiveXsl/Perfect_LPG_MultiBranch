@@ -2,7 +2,7 @@
 <?= $this->section('content') ?>
 <?php
 $oldRows = old('rows');
-$oldRows = is_array($oldRows) && $oldRows ? array_values($oldRows) : [['issued_on' => date('Y-m-d')]];
+$oldRows = is_array($oldRows) && $oldRows ? array_values($oldRows) : [['issued_on' => \App\Services\BranchContext::today()]];
 ?>
 <div class="mb-3">
     <h4 class="mb-1">Old Issued Cylinders</h4>
@@ -29,7 +29,7 @@ $oldRows = is_array($oldRows) && $oldRows ? array_values($oldRows) : [['issued_o
                     <tbody>
                     <?php foreach ($oldRows as $i => $row): ?>
                         <tr class="oldIssuedRow">
-                            <td><input type="date" class="form-control form-control-sm rowDate" name="rows[<?= (int)$i ?>][issued_on]" value="<?= esc($row['issued_on'] ?? date('Y-m-d'), 'attr') ?>" max="<?= date('Y-m-d') ?>" required></td>
+                            <td><input type="date" class="form-control form-control-sm rowDate" name="rows[<?= (int)$i ?>][issued_on]" value="<?= esc($row['issued_on'] ?? \App\Services\BranchContext::today(), 'attr') ?>" max="<?= \App\Services\BranchContext::today() ?>" required></td>
                             <td>
                                 <select class="form-select form-select-sm rowCustomer" name="rows[<?= (int)$i ?>][customer_id]" required>
                                     <option value="">Select customer</option>

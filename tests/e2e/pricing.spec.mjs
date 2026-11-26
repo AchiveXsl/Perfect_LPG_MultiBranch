@@ -191,6 +191,8 @@ test('S-03 Opening stock is enough for the run', async () => {
     await page.selectOption('#cylinderTypeId', await optionValue(page.locator('#cylinderTypeId'), code));
     await page.fill('#quantity', String(qty));
     await page.fill('#actualGasWeight', String(gas));
+    // Cylinder cost is required on opening stock (feature opening-cylinder-cost-required).
+    if (await page.locator('#cylinderCost').count()) await page.fill('#cylinderCost', '4000');
     await Promise.all([page.waitForLoadState('load'), page.getByRole('button', { name: 'Save Opening Inventory' }).click()]);
   };
   let s = await stock();

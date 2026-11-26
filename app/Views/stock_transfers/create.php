@@ -26,7 +26,7 @@
             </div>
             <div class="col-md-3">
                 <label class="form-label">Transfer date</label>
-                <input type="datetime-local" name="transfer_date" id="transferDate" class="form-control" min="<?= esc($earliestDate) ?>T00:00" max="<?= date('Y-m-d\TH:i') ?>" value="<?= esc(old('transfer_date') ?? date('Y-m-d\TH:i')) ?>">
+                <input type="datetime-local" name="transfer_date" id="transferDate" class="form-control" min="<?= esc($earliestDate) ?>T00:00" max="<?= \App\Services\BranchContext::nowLocal() ?>" value="<?= esc(old('transfer_date') ?? \App\Services\BranchContext::nowLocal()) ?>">
                 <div class="form-text">From <?= esc(date('d M Y', strtotime($earliestDate))) ?> to now (Shop Settings).</div>
             </div>
             <div class="col-md-4">

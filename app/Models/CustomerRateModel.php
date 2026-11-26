@@ -22,7 +22,7 @@ class CustomerRateModel extends Model
 
     public function effectiveRow(int $locationId, int $customerId, string $rateType, ?int $cylinderTypeId, ?string $asOf=null): ?array
     {
-        $at=$asOf??date('Y-m-d H:i:s');
+        $at=$asOf??\App\Services\BranchContext::now();
         $row=$this->forKey($locationId,$customerId,$rateType,$cylinderTypeId)->where('effective_from <=',$at)->orderBy('effective_from','DESC')->orderBy('id','DESC')->first();
         if(!$row || ($row['effective_to']!==null && $row['effective_to']<=$at)) return null;
         return $row;
@@ -36,7 +36,7 @@ class CustomerRateModel extends Model
 
     public function nextRow(int $locationId, int $customerId, string $rateType, ?int $cylinderTypeId, ?string $asOf=null): ?array
     {
-        return $this->forKey($locationId,$customerId,$rateType,$cylinderTypeId)->where('effective_from >',$asOf??date('Y-m-d H:i:s'))->orderBy('effective_from','ASC')->orderBy('id','ASC')->first();
+        return $this->forKey($locationId,$customerId,$rateType,$cylinderTypeId)->where('effective_from >',$asOf??\App\Services\BranchContext::now())->orderBy('effective_from','ASC')->orderBy('id','ASC')->first();
     }
 
     /** Every special rate row of one customer in this shop, newest first. */

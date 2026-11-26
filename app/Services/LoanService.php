@@ -90,7 +90,7 @@ class LoanService
             $this->db->table('loan_entries')->insert([
                 'entry_no' => $no, 'location_id' => $locationId, 'lender_id' => (int) $lender['id'], 'entry_type' => $type,
                 'amount' => $amount, 'payment_mode' => $mode, 'reference_no' => trim((string) ($in['reference_no'] ?? '')) ?: null,
-                'entry_at' => date('Y-m-d H:i:s'), 'due_date' => ($type === 'received' && $due !== '') ? $due : null,
+                'entry_at' => \App\Services\BranchContext::now(), 'due_date' => ($type === 'received' && $due !== '') ? $due : null,
                 'notes' => trim((string) ($in['notes'] ?? '')) ?: null, 'status' => 'posted', 'created_by' => $userId,
             ]);
             $id = (int) $this->db->insertID();
@@ -135,14 +135,14 @@ class LoanService
                 throw new RuntimeException('Cannot void: part of this loan is already repaid. Void the repayment first.');
             }
             $this->db->table('loan_entries')->where('id', $entryId)->update([
-                'status' => 'voided', 'void_reason' => $reason, 'voided_by' => $userId, 'voided_at' => date('Y-m-d H:i:s'),
+                'status' => 'voided', 'void_reason' => $reason, 'voided_by' => $userId, 'voided_at' => \App\Services\BranchContext::now(),
             ]);
             if ($entry['payment_mode'] === 'cash') {
                 foreach ($this->db->table('cash_transactions')->where(['reference_type' => 'loan_entry', 'reference_id' => $entryId])->get()->getResultArray() as $cash) {
                     $this->db->table('cash_transactions')->insert([
                         'cash_session_id' => $cash['cash_session_id'], 'transaction_type' => $cash['transaction_type'],
                         'direction' => $cash['direction'] === 'in' ? 'out' : 'in', 'amount' => $cash['amount'],
-                        'transaction_at' => date('Y-m-d H:i:s'), 'reference_type' => 'loan_entry_void', 'reference_id' => $entryId,
+                        'transaction_at' => \App\Services\BranchContext::now(), 'reference_type' => 'loan_entry_void', 'reference_id' => $entryId,
                         'created_by' => $userId, 'notes' => 'Cash reversal of voided loan entry ' . $entry['entry_no'],
                     ]);
                 }

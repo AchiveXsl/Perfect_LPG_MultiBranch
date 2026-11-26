@@ -43,7 +43,7 @@ class CylinderUnitService
     public function available(int $locationId,int $typeId,string $status='filled'): array
     {
         return $this->db->query(
-            "SELECT * FROM cylinder_units WHERE location_id=? AND cylinder_type_id=? AND status=? ORDER BY id FOR UPDATE",
+            "SELECT * FROM cylinder_units cu WHERE location_id=? AND cylinder_type_id=? AND status=?".\App\Services\TimelineGuard::freeAtSql('cu',\App\Services\BranchContext::now())." ORDER BY id FOR UPDATE",
             [$locationId,$typeId,$status]
         )->getResultArray();
     }
@@ -54,6 +54,7 @@ class CylinderUnitService
             ->select('cu.*,ct.code cylinder_code,ct.name cylinder_name,ct.capacity_kg')
             ->join('cylinder_types ct','ct.id=cu.cylinder_type_id')
             ->where(['cu.location_id'=>$locationId,'cu.cylinder_type_id'=>$typeId,'cu.status'=>$status])
+            ->where('1=1'.\App\Services\TimelineGuard::freeAtSql('cu',\App\Services\BranchContext::now()),null,false)
             ->orderBy('cu.id')->get()->getResultArray();
     }
 
@@ -63,7 +64,8 @@ class CylinderUnitService
             ->select('cu.*,ct.code cylinder_code,ct.name cylinder_name,ct.capacity_kg')
             ->join('cylinder_types ct','ct.id=cu.cylinder_type_id')
             ->where('cu.location_id',$locationId)
-            ->whereIn('cu.status',$status?[$status]:['filled','empty']);
+            ->whereIn('cu.status',$status?[$status]:['filled','empty'])
+            ->where('1=1'.\App\Services\TimelineGuard::freeAtSql('cu',\App\Services\BranchContext::now()),null,false);
         if($typeId) $q->where('cu.cylinder_type_id',$typeId);
         return $q->orderBy('cu.id')->get()->getResultArray();
     }
@@ -88,7 +90,7 @@ class CylinderUnitService
         $this->db->table('cylinder_custody')->insert([
             'location_id'=>$unit['location_id'],'customer_id'=>$customerId,'cylinder_unit_id'=>$unitId,
             'status'=>'issued','issue_sale_id'=>$issueSaleId,'deposit_amount'=>0,'refund_amount'=>0,
-            'issued_at'=>date('Y-m-d H:i:s'),'created_by'=>$userId
+            'issued_at'=>\App\Services\BranchContext::now(),'created_by'=>$userId
         ]);
     }
 
@@ -104,7 +106,7 @@ class CylinderUnitService
         if((float)$custody['gas_weight_kg']>0.00001) throw new RuntimeException('Cylinder '.$custodyId.' must be empty before it can be returned.');
         $this->db->table('cylinder_units')->where('id',$custody['cylinder_unit_id'])->update(['status'=>'empty','custody_customer_id'=>null,'gas_weight_kg'=>0]);
         $this->db->table('cylinder_custody')->where('id',$custodyId)->update([
-            'status'=>'returned','return_sale_id'=>$returnSaleId,'refund_amount'=>(float)$custody['deposit_amount'],'returned_at'=>date('Y-m-d H:i:s'),'updated_by'=>$userId
+            'status'=>'returned','return_sale_id'=>$returnSaleId,'refund_amount'=>(float)$custody['deposit_amount'],'returned_at'=>\App\Services\BranchContext::now(),'updated_by'=>$userId
         ]);
         return $custody;
     }

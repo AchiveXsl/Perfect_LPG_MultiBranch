@@ -2,6 +2,7 @@
 namespace App\Services;
 use Config\Database;
 use RuntimeException;
+use App\Exceptions\SystemDateConflict;
 class CashService {
  protected $db;
  public function __construct(){ $this->db=Database::connect(); }
@@ -11,15 +12,54 @@ class CashService {
   try {
    $register=$this->db->query("SELECT * FROM cash_registers WHERE location_id=? AND is_active=1 ORDER BY id LIMIT 1 FOR UPDATE",[$locationId])->getRowArray();
    if(!$register) throw new RuntimeException('No active cash register exists for this location.');
-   if($this->db->table('cash_sessions')->where('register_id',$register['id'])->where('status','open')->get()->getRowArray()) throw new RuntimeException('An open cash session already exists for this register.');
-   $this->db->table('cash_sessions')->insert(['register_id'=>$register['id'],'opened_by'=>$userId,'opening_cash'=>$openingCash,'notes'=>trim($notes)?:null]);
+   $existing=$this->db->table('cash_sessions')->where('register_id',$register['id'])->where('status','open')->get()->getRowArray();
+   if($existing) throw self::otherDateConflict($existing,BranchContext::today($locationId),'open a new counter session');
+   // One counter session per System Date: the session carries the branch's working date.
+   $openedAt=BranchContext::now($locationId);
+   $this->db->table('cash_sessions')->insert(['register_id'=>$register['id'],'opened_by'=>$userId,'opened_at'=>$openedAt,'opening_cash'=>$openingCash,'notes'=>trim($notes)?:null]);
    $id=(int)$this->db->insertID();
-   if($openingCash>0) $this->db->table('cash_transactions')->insert(['cash_session_id'=>$id,'transaction_type'=>'opening_float','direction'=>'in','amount'=>$openingCash,'created_by'=>$userId,'notes'=>'Opening float']);
+   if($openingCash>0) $this->db->table('cash_transactions')->insert(['cash_session_id'=>$id,'transaction_type'=>'opening_float','direction'=>'in','amount'=>$openingCash,'transaction_at'=>$openedAt,'created_by'=>$userId,'notes'=>'Opening float']);
    if(!$this->db->transStatus()) throw new RuntimeException('Cash session could not be opened.');
    $this->db->transCommit(); return $id;
   } catch(\Throwable $e){$this->db->transRollback();throw $e;}
  }
- public function openSessionForLocation(int $locationId): ?array {
+ /**
+  * The open counter session of a branch. Each session belongs to one date (owner decision 2026-11-26).
+  * When posting ($forPosting, default: on POST requests) a session opened on another date than the
+  * System Date is refused with an explanation of what to do.
+  */
+ public function openSessionForLocation(int $locationId, ?bool $forPosting=null): ?array {
+  $session=$this->findOpenSession($locationId);
+  if($forPosting===null) $forPosting=!is_cli() && strtoupper((string)service('request')->getMethod())==='POST';
+  if($session && $forPosting && substr((string)$session['opened_at'],0,10)!==BranchContext::today($locationId)) {
+   throw self::otherDateConflict($session,BranchContext::today($locationId),'post cash');
+  }
+  return $session;
+ }
+ /** True when the open session belongs to a date other than the System Date. */
+ public static function sessionDateMismatch(?array $session, int $locationId): bool {
+  return $session && substr((string)$session['opened_at'],0,10)!==BranchContext::today($locationId);
+ }
+ protected static function otherDateConflict(array $session,string $systemDate,string $doing): SystemDateConflict {
+  $sessionDate=substr((string)$session['opened_at'],0,10);
+  $sd=date('d-M-Y',strtotime($sessionDate)); $sys=date('d-M-Y',strtotime($systemDate));
+  $item=[['label'=>'Counter session '.($session['register_code']??'').' opened','date'=>date('d-M-Y H:i',strtotime((string)$session['opened_at'])),'url'=>site_url('cash')]];
+  if($sessionDate===$systemDate) {
+   return new SystemDateConflict('A counter session is already open for '.$sd,
+    'Only one counter session can be open at a time, and the session for '.$sd.' is open already.',
+    $item,
+    [['text'=>'Keep working in the open session. Cash entries of '.$sd.' go into it.','action'=>['type'=>'link','url'=>site_url('cash'),'label'=>'Open Counter Cash']]]);
+  }
+  return new SystemDateConflict('Cannot '.$doing.' on '.$sys,
+   'Each counter session belongs to one date. The open counter session is for '.$sd.', but the System Date is '.$sys.'. Cash of '.$sys.' cannot go into the session of '.$sd.', otherwise the cash count of both days would be wrong.',
+   $item,
+   [
+    ['text'=>'Finish '.$sd.' first: count the cash and close that session on Counter Cash, then open a session for '.$sys.'.','action'=>['type'=>'link','url'=>site_url('cash'),'label'=>'Go to Counter Cash']],
+    ['text'=>'Or change the System Date back to '.$sd.' and post this there.','action'=>['type'=>'set_date','date'=>$sessionDate,'label'=>'Change System Date to '.$sd]],
+    ['text'=>'Or post it as cheque / online (or credit for a named customer), which does not use the counter.'],
+   ]);
+ }
+ protected function findOpenSession(int $locationId): ?array {
   return $this->db->table('cash_sessions cs')->select('cs.*,cr.code register_code,cr.name register_name')->join('cash_registers cr','cr.id=cs.register_id')->where('cr.location_id',$locationId)->where('cs.status','open')->orderBy('cs.id','DESC')->get()->getRowArray() ?: null;
  }
  public function postSaleCash(int $sessionId,int $saleId,float $amount,int $userId,string $at): void {
@@ -34,7 +74,7 @@ class CashService {
   if(!in_array($direction,['in','out'],true)) throw new RuntimeException('Invalid cash direction.');
   $session=$this->db->query("SELECT * FROM cash_sessions WHERE id=? FOR UPDATE",[$sessionId])->getRowArray();
   if(!$session || $session['status']!=='open') throw new RuntimeException('Cash session is closed or unavailable.');
-  $this->db->table('cash_transactions')->insert(['cash_session_id'=>$sessionId,'transaction_type'=>$type,'direction'=>$direction,'amount'=>$amount,'transaction_at'=>$at?:date('Y-m-d H:i:s'),'reference_type'=>$referenceType,'reference_id'=>$referenceId,'created_by'=>$userId,'notes'=>$notes?:null]);
+  $this->db->table('cash_transactions')->insert(['cash_session_id'=>$sessionId,'transaction_type'=>$type,'direction'=>$direction,'amount'=>$amount,'transaction_at'=>$at?:BranchContext::now(),'reference_type'=>$referenceType,'reference_id'=>$referenceId,'created_by'=>$userId,'notes'=>$notes?:null]);
   if(!$this->db->transStatus()) throw new RuntimeException('Cash transaction could not be posted.');
  }
  public function summary(int $sessionId): array {
@@ -44,7 +84,7 @@ class CashService {
   return ['session'=>$session,'cash_in'=>(float)($row['cash_in']??0),'cash_out'=>(float)($row['cash_out']??0),'expected'=>(float)($row['cash_in']??0)-(float)($row['cash_out']??0)];
  }
  public function history(int $locationId, ?string $from=null, ?string $to=null, ?int $registerId=null): array {
-  $from=$from?:date('Y-m-d',strtotime('-30 days')); $to=$to?:date('Y-m-d');
+  $from=$from?:date('Y-m-d',strtotime(BranchContext::today().' -30 days')); $to=$to?:BranchContext::today();
   $q=$this->db->table('cash_transactions ct')->select('ct.*,cs.opened_by,cs.opened_at,cs.closed_at,cs.counted_cash,cr.code register_code,cr.name register_name')->join('cash_sessions cs','cs.id=ct.cash_session_id')->join('cash_registers cr','cr.id=cs.register_id')->where('cr.location_id',$locationId)->where('ct.transaction_at >=',$from.' 00:00:00')->where('ct.transaction_at <=',$to.' 23:59:59');
   if($registerId) $q->where('cr.id',$registerId);
   return $q->orderBy('ct.transaction_at','DESC')->orderBy('ct.id','DESC')->get()->getResultArray();
@@ -57,7 +97,11 @@ class CashService {
    if(!$session) throw new RuntimeException('Cash session not found.');
    if($session['status']!=='open') throw new RuntimeException('Cash session is already closed.');
    $summary=$this->summary($sessionId);
-   $this->db->table('cash_sessions')->where('id',$sessionId)->update(['closed_by'=>$userId,'closed_at'=>date('Y-m-d H:i:s'),'counted_cash'=>$countedCash,'status'=>'closed','notes'=>trim($notes)?:$summary['session']['notes']]);
+   // A session closes on its own date: when the System Date has moved on, it closes at the end of that day.
+   $sessionDate=substr((string)$session['opened_at'],0,10);
+   $closedAt=$sessionDate===BranchContext::today()?BranchContext::now():$sessionDate.' 23:59:59';
+   if($closedAt<$session['opened_at']) $closedAt=$session['opened_at'];
+   $this->db->table('cash_sessions')->where('id',$sessionId)->update(['closed_by'=>$userId,'closed_at'=>$closedAt,'counted_cash'=>$countedCash,'status'=>'closed','notes'=>trim($notes)?:$summary['session']['notes']]);
    if(!$this->db->transStatus()) throw new RuntimeException('Cash session could not be closed.');
    $this->db->transCommit(); return ['expected'=>$summary['expected'],'counted'=>$countedCash,'difference'=>$countedCash-$summary['expected']];
   } catch(\Throwable $e){$this->db->transRollback();throw $e;}

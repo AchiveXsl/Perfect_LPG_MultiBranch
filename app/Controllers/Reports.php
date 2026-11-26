@@ -45,7 +45,7 @@ class Reports extends Controller
 
     private function dateRange(): array
     {
-        $today = date('Y-m-d');
+        $today = \App\Services\BranchContext::today();
         $from = trim((string) $this->request->getGet('from')) ?: $today;
         $to = trim((string) $this->request->getGet('to')) ?: $today;
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $from)) $from = $today;

@@ -17,7 +17,7 @@ class ExpenseModel extends Model
 
     public function totalForDate(?string $date = null, ?string $category = null): float
     {
-        $date = $date ?? date('Y-m-d');
+        $date = $date ?? \App\Services\BranchContext::today();
 
         $builder = $this->selectSum('amount', 'total')->where('expense_date', $date);
 
