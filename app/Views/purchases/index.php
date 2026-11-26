@@ -135,6 +135,16 @@ document.addEventListener('DOMContentLoaded', function () {
                         <label class="form-label fw-semibold">Discount</label>
                         <input name="discount_amount" id="discount" class="form-control text-end" type="number" step=".01" min="0" value="0">
                     </div>
+                    <div class="col-lg-3">
+                        <label class="form-label fw-semibold">Purchase Date &amp; Time</label>
+                        <input name="transaction_at" id="purchaseDate" type="datetime-local" class="form-control" required
+                            value="<?= esc(old('transaction_at') ?: date('Y-m-d\TH:i'), 'attr') ?>" max="<?= date('Y-m-d\T23:59') ?>">
+                    </div>
+                    <div class="col-lg-9 d-none" id="purchaseBackdateBox">
+                        <label class="form-label fw-semibold">Reason for back-dating <span class="text-danger">*</span></label>
+                        <input name="backdate_reason" id="purchaseBackdateReason" class="form-control" maxlength="255"
+                            value="<?= esc(old('backdate_reason') ?? '', 'attr') ?>" placeholder="Why is this purchase dated earlier than today?">
+                    </div>
                 </div>
             </div>
         </div>
@@ -517,6 +527,13 @@ document.addEventListener('DOMContentLoaded', function () {
                                                 </div>
                                             </div>
 
+                                            <?php if (trim((string) ($purchase['backdate_reason'] ?? '')) !== ''): ?>
+                                                <div class="mt-4">
+                                                    <h6 class="fw-semibold mb-2">Reason for back-dating</h6>
+                                                    <div class="purchase-detail-summary p-3"><?= esc($purchase['backdate_reason']) ?></div>
+                                                </div>
+                                            <?php endif; ?>
+
                                             <?php if (trim((string) ($purchase['notes'] ?? '')) !== ''): ?>
                                                 <div class="mt-4">
                                                     <h6 class="fw-semibold mb-2">Notes</h6>
@@ -754,6 +771,20 @@ document.getElementById('paymentType').addEventListener('change', function () {
     calculate();
 });
 document.getElementById('amountPaid').addEventListener('input', calculate);
+
+// Back-dating: a reason is required before today, and cash cannot go before the open counter session.
+const purchaseDate = document.getElementById('purchaseDate');
+const cashOpenedAt = <?= json_encode(str_replace(' ', 'T', substr((string) ($cashOpenedAt ?? ''), 0, 16))) ?>;
+function refreshPurchaseDate() {
+    const back = purchaseDate.value !== '' && purchaseDate.value.slice(0, 10) < purchaseDate.max.slice(0, 10);
+    document.getElementById('purchaseBackdateBox').classList.toggle('d-none', !back);
+    document.getElementById('purchaseBackdateReason').required = back;
+    purchaseDate.min = document.getElementById('paymentType').value === 'cash' ? cashOpenedAt : '';
+}
+purchaseDate.addEventListener('change', refreshPurchaseDate);
+purchaseDate.addEventListener('input', refreshPurchaseDate);
+document.getElementById('paymentType').addEventListener('change', refreshPurchaseDate);
+refreshPurchaseDate();
 
 document.getElementById('purchaseForm').onsubmit = function () {
     const lines = [...document.querySelectorAll('.line')].map(row => ({
