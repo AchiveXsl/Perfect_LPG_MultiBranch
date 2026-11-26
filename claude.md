@@ -262,6 +262,11 @@ Screen: Cash & Expenses → Loans (`/loans`), permission `LOAN_MANAGE` (Admin by
 - A loan is a liability: never sales, profit or expense. Cash entries post counter cash `loan_received` (IN) / `loan_repayment` (OUT) and need an open cash session; cheque / online do not touch the counter.
 - Entries are voided with a reason, never deleted; the void reverses the cash in the session it was posted in. A received loan cannot be voided while part of it is repaid (void the repayment first). Lender opening balance is fixed once entries exist.
 
+## Back-dated customer receipts (owner decision 2026-11-26)
+- Customer Receipts has a Receive Date (default today, never in the future), stored in `customer_receipts.receipt_at` and printed on the receipt.
+- A date before today needs a reason (`backdate_reason`, migration 052). No special permission is required.
+- Cash receipts cannot be dated before the open counter session opened. Cheque and online have no earliest date.
+
 ## Purchase rate edit (owner decision 2026-11-24)
 - Purchases → History → a purchase → **Edit Rates** (PURCHASE_MANAGE, purchase of the current branch, not voided). Only the rate changes; quantity and stock never do. Reason required. Code: `PurchaseService::changeRates()` / `lineStockUse()`, history in `purchase_rate_changes` (migration 050).
 - Line total, purchase subtotal / total and `credit_amount` move by the difference (supplier payable adjusts; money already paid stays). The line cost layer takes the new unit cost.
