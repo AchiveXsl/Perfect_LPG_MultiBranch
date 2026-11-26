@@ -36,13 +36,15 @@ class InventoryService{
   throw new RuntimeException('Invalid inventory type.');
  }
 
- public function receivePurchase(int $locationId,string $type,?int $typeId,float $qty,float $actualGasWeight,int $purchaseId,int $userId,?int $purchaseLineId=null): void
+ public function receivePurchase(int $locationId,string $type,?int $typeId,float $qty,float $actualGasWeight,int $purchaseId,int $userId,?int $purchaseLineId=null,?string $at=null): void
  {
   if($qty<=0) throw new RuntimeException('Purchase quantity must be greater than zero.');
   if(!in_array($type,['gas_kg','filled_cylinder','empty_cylinder','refill_empty'],true)) throw new RuntimeException('Invalid purchase inventory type.');
 
+  $at=$at?:date('Y-m-d H:i:s');
+
   if($type==='refill_empty'){
-   $this->refillEmptyCylinders($locationId,$typeId,$qty,$actualGasWeight,$purchaseId,$userId,$purchaseLineId);
+   $this->refillEmptyCylinders($locationId,$typeId,$qty,$actualGasWeight,$purchaseId,$userId,$purchaseLineId,$at);
    return;
   }
 
@@ -50,7 +52,7 @@ class InventoryService{
    if($typeId!==null) throw new RuntimeException('Gas purchase does not use a cylinder type.');
    $this->db->table('inventory_movements')->insert([
     'location_id'=>$locationId,'inventory_type'=>'gas_kg','cylinder_type_id'=>null,
-    'quantity'=>$qty,'direction'=>'in','movement_at'=>date('Y-m-d H:i:s'),
+    'quantity'=>$qty,'direction'=>'in','movement_at'=>$at,
     'source_type'=>'purchase','source_id'=>$purchaseId,'source_line_id'=>$purchaseLineId,'created_by'=>$userId,
     'notes'=>'Stock received through purchase'
    ]);
@@ -83,7 +85,7 @@ class InventoryService{
   foreach($unitIds as $unitId){
    $this->db->table('inventory_movements')->insert([
     'location_id'=>$locationId,'inventory_type'=>$type,'cylinder_type_id'=>$typeId,
-    'quantity'=>1,'direction'=>'in','movement_at'=>date('Y-m-d H:i:s'),
+    'quantity'=>1,'direction'=>'in','movement_at'=>$at,
     'source_type'=>'purchase','source_id'=>$purchaseId,'source_line_id'=>$purchaseLineId,'cylinder_unit_id'=>$unitId,
     'created_by'=>$userId,'notes'=>'Physical cylinder received through purchase'
    ]);
@@ -91,7 +93,7 @@ class InventoryService{
    if($type==='filled_cylinder'){
     $this->db->table('inventory_movements')->insert([
      'location_id'=>$locationId,'inventory_type'=>'gas_kg','cylinder_type_id'=>null,
-     'quantity'=>$gasPerUnit,'direction'=>'in','movement_at'=>date('Y-m-d H:i:s'),
+     'quantity'=>$gasPerUnit,'direction'=>'in','movement_at'=>$at,
      'source_type'=>'purchase','source_id'=>$purchaseId,'source_line_id'=>$purchaseLineId,'cylinder_unit_id'=>$unitId,
      'created_by'=>$userId,'notes'=>'Gas contained in purchased filled cylinder'
     ]);
@@ -109,7 +111,7 @@ class InventoryService{
   * Refill existing empty company cylinders with purchased gas.
   * Each empty cylinder becomes a filled cylinder holding $gasPerUnit KG.
   */
- protected function refillEmptyCylinders(int $locationId,?int $typeId,float $qty,float $gasPerUnit,int $purchaseId,int $userId,?int $purchaseLineId): void
+ protected function refillEmptyCylinders(int $locationId,?int $typeId,float $qty,float $gasPerUnit,int $purchaseId,int $userId,?int $purchaseLineId,string $at): void
  {
   if($typeId===null) throw new RuntimeException('Cylinder type is required to refill empty cylinders.');
   if(floor($qty)!==$qty || $qty<1) throw new RuntimeException('Refill quantity must be a whole number.');
@@ -119,16 +121,19 @@ class InventoryService{
 
   $qtyInt=(int)$qty;
   $units=$this->db->query(
-   "SELECT id FROM cylinder_units WHERE location_id=? AND cylinder_type_id=? AND status='empty' ORDER BY id LIMIT ".$qtyInt." FOR UPDATE",
-   [$locationId,$typeId]
+   // Only cylinders with no stock movement after the purchase date: a cylinder cannot be refilled before its latest history.
+   "SELECT id FROM cylinder_units WHERE location_id=? AND cylinder_type_id=? AND status='empty'
+      AND NOT EXISTS (SELECT 1 FROM inventory_movements m WHERE m.cylinder_unit_id=cylinder_units.id AND m.movement_at>?)
+      AND NOT EXISTS (SELECT 1 FROM inventory_opening_balances o WHERE cylinder_units.source_type='opening' AND o.id=cylinder_units.source_id AND o.inventory_date>?)
+    ORDER BY id LIMIT ".$qtyInt." FOR UPDATE",
+   [$locationId,$typeId,$at,substr($at,0,10)]
   )->getResultArray();
-  if(count($units)<$qtyInt) throw new RuntimeException('Only '.count($units).' empty '.$ct['name'].' cylinder(s) are available to refill; '.$qtyInt.' requested.');
+  if(count($units)<$qtyInt) throw new RuntimeException('Only '.count($units).' empty '.$ct['name'].' cylinder(s) were available to refill on '.date('d M Y H:i',strtotime($at)).'; '.$qtyInt.' requested.');
 
-  $now=date('Y-m-d H:i:s');
   foreach($units as $u){
    $unitId=(int)$u['id'];
    $this->db->table('cylinder_units')->where('id',$unitId)->update(['status'=>'filled','gas_weight_kg'=>$gasPerUnit,'filled_purchase_id'=>$purchaseId]);
-   $base=['location_id'=>$locationId,'cylinder_type_id'=>$typeId,'movement_at'=>$now,'source_type'=>'purchase','source_id'=>$purchaseId,'source_line_id'=>$purchaseLineId,'cylinder_unit_id'=>$unitId,'created_by'=>$userId];
+   $base=['location_id'=>$locationId,'cylinder_type_id'=>$typeId,'movement_at'=>$at,'source_type'=>'purchase','source_id'=>$purchaseId,'source_line_id'=>$purchaseLineId,'cylinder_unit_id'=>$unitId,'created_by'=>$userId];
    $this->db->table('inventory_movements')->insert($base+['inventory_type'=>'empty_cylinder','quantity'=>1,'direction'=>'out','notes'=>'Empty cylinder refilled through purchase']);
    $this->db->table('inventory_movements')->insert($base+['inventory_type'=>'filled_cylinder','quantity'=>1,'direction'=>'in','notes'=>'Cylinder refilled through purchase']);
    $this->db->table('inventory_movements')->insert(array_merge($base,['inventory_type'=>'gas_kg','cylinder_type_id'=>null,'quantity'=>$gasPerUnit,'direction'=>'in','notes'=>'Gas added to refilled cylinder']));

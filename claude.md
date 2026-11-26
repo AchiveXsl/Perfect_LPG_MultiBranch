@@ -267,6 +267,12 @@ Screen: Cash & Expenses → Loans (`/loans`), permission `LOAN_MANAGE` (Admin by
 - A date before today needs a reason (`backdate_reason`, migration 052). No special permission is required.
 - Cash receipts cannot be dated before the open counter session opened. Cheque and online have no earliest date.
 
+## Back-dated purchases (owner decision 2026-11-26)
+- New Purchase has a Purchase Date & Time (default now, never in the future). It dates the purchase, its payments, stock movements, cost layers and counter cash. Code: `PurchaseService::resolvePurchaseDate()`.
+- A date before today needs a reason (`purchases.backdate_reason`, migration 053). No special permission is required.
+- A purchase with a cash payment cannot be dated before the open counter session opened.
+- A refill takes only empty cylinders with no stock movement after the purchase date.
+
 ## Purchase rate edit (owner decision 2026-11-24)
 - Purchases → History → a purchase → **Edit Rates** (PURCHASE_MANAGE, purchase of the current branch, not voided). Only the rate changes; quantity and stock never do. Reason required. Code: `PurchaseService::changeRates()` / `lineStockUse()`, history in `purchase_rate_changes` (migration 050).
 - Line total, purchase subtotal / total and `credit_amount` move by the difference (supplier payable adjusts; money already paid stays). The line cost layer takes the new unit cost.

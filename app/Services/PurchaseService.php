@@ -9,6 +9,27 @@ class PurchaseService{
   * Post a purchase. $locationId is the branch entering it (the Head Office): it owns the purchase, the supplier
   * payable and any cash paid. Each line's stock is received at its own receive_location_id (default: $locationId).
   */
+ /**
+  * The purchase date and time chosen on the screen, and why it is back-dated.
+  * Blank, or up to 10 minutes old (the screen fills it in when it opens), means now. The future is rejected.
+  * A date before today needs a reason.
+  * @return array{0:string,1:?string}
+  */
+ protected function resolvePurchaseDate(array $p):array{
+  $now=time();$input=str_replace('T',' ',trim((string)($p['transaction_at']??'')));
+  if($input==='')return [date('Y-m-d H:i:s',$now),null];
+  if(strlen($input)===16)$input.=':00';
+  $d=\DateTime::createFromFormat('!Y-m-d H:i:s',$input);
+  if(!$d||$d->format('Y-m-d H:i:s')!==$input)throw new RuntimeException('Invalid purchase date and time.');
+  $ts=$d->getTimestamp();
+  if($ts>$now+300)throw new RuntimeException('Purchase date and time cannot be in the future.');
+  if($ts>=$now-600)return [date('Y-m-d H:i:s',$now),null];
+  if(substr($input,0,10)>=date('Y-m-d',$now))return [$input,null];
+  $reason=trim((string)($p['backdate_reason']??''));
+  if($reason==='')throw new RuntimeException('Enter the reason for the back-dated purchase.');
+  if(mb_strlen($reason)>255)throw new RuntimeException('Back-date reason cannot exceed 255 characters.');
+  return [$input,$reason];
+ }
  public function post(array $p,int $userId,int $locationId):array{
   $supplierId=(int)($p['supplier_id']??0); $lines=$p['lines']??[]; $payments=$p['payments']??[];
   $activeBranches=array_map('intval',array_column(BranchContext::allActive(),'id'));
@@ -61,13 +82,22 @@ class PurchaseService{
    if(!$plant) throw new RuntimeException('Selected plant does not belong to this supplier.');
   }
   if($newPayable>(float)$supplier['credit_limit']+0.01)throw new RuntimeException('Supplier credit limit exceeded. Available credit is Rs. '.number_format(max(0,(float)$supplier['credit_limit']-$previousPayable),2).'.');
+  [$at,$backdateReason]=$this->resolvePurchaseDate($p);
+  // Cash leaves the open counter session, so a cash purchase cannot be dated before that session opened.
+  if(in_array('cash',array_column($normalizedPayments,'payment_mode'),true)){
+   $session=$this->cash->openSessionForLocation($locationId);
+   if(!$session)throw new RuntimeException('Open the counter cash session before posting a cash purchase.');
+   $openedAt=(string)$session['opened_at'];
+   if(substr($at,0,16)<substr($openedAt,0,16))throw new RuntimeException('A cash purchase cannot be dated before the open counter session, which opened on '.date('d M Y H:i',strtotime($openedAt)).'.');
+   $at=max($at,$openedAt);
+  }
   $this->db->transBegin();
   try{
    $supplier=$this->db->query('SELECT * FROM suppliers WHERE id=? FOR UPDATE',[$supplierId])->getRowArray();
    if($credit>0){$currentCredit=$this->supplierBalance($supplierId,$locationId);if($currentCredit+$credit>(float)$supplier['credit_limit'])throw new RuntimeException('Supplier credit limit exceeded.');}
    foreach($inventory as $m){if($m['inventory_type']!=='refill_empty'&&$this->inv->stock((int)$m['location_id'],$m['inventory_type'],$m['cylinder_type_id'])<0)throw new RuntimeException('Invalid inventory state.');}
    $no='P'.date('YmdHis').'-'.random_int(100,999);
-   $this->db->table('purchases')->insert(['purchase_no'=>$no,'location_id'=>$locationId,'supplier_id'=>$supplierId,'plant_id'=>$plantId,'status'=>'posted','transaction_at'=>date('Y-m-d H:i:s'),'subtotal'=>$subtotal,'discount_amount'=>$discount,'total_amount'=>$total,'credit_amount'=>$credit,'notes'=>trim((string)($p['notes']??''))?:null,'created_by'=>$userId]);$id=(int)$this->db->insertID();
+   $this->db->table('purchases')->insert(['purchase_no'=>$no,'location_id'=>$locationId,'supplier_id'=>$supplierId,'plant_id'=>$plantId,'status'=>'posted','transaction_at'=>$at,'backdate_reason'=>$backdateReason,'subtotal'=>$subtotal,'discount_amount'=>$discount,'total_amount'=>$total,'credit_amount'=>$credit,'notes'=>trim((string)($p['notes']??''))?:null,'created_by'=>$userId]);$id=(int)$this->db->insertID();
    $purchaseLineIds=[];
    foreach($prepared as $row){
     $row['purchase_id']=$id;
@@ -83,19 +113,20 @@ class PurchaseService{
       (float)$m['actual_gas_weight_kg'],
       $id,
       $userId,
-      $purchaseLineIds[$index+1] ?? null
+      $purchaseLineIds[$index+1] ?? null,
+      $at
     );
    }
    $remainingCurrent=$currentPayable;$cashPurchase=0;
    foreach($normalizedPayments as $pay){$applyCurrent=min((float)$pay['amount'],$remainingCurrent);$applyPrior=max(0,(float)$pay['amount']-$applyCurrent);
-    if($applyCurrent>0){$this->db->table('purchase_payments')->insert(['purchase_id'=>$id,'payment_mode'=>$pay['payment_mode'],'amount'=>$applyCurrent,'reference_no'=>$pay['reference_no'],'payment_at'=>date('Y-m-d H:i:s'),'paid_by'=>$userId]);if($pay['payment_mode']==='cash')$cashPurchase+=$applyCurrent;}
-    if($applyPrior>0){$paymentNo='SP'.date('YmdHis').'-'.random_int(100,999);$this->db->table('supplier_payments')->insert(['payment_no'=>$paymentNo,'location_id'=>$locationId,'supplier_id'=>$supplierId,'status'=>'posted','amount'=>$applyPrior,'payment_mode'=>$pay['payment_mode'],'payment_at'=>date('Y-m-d H:i:s'),'reference_no'=>$pay['reference_no'],'notes'=>'Applied to previous supplier payable during purchase '.$no,'created_by'=>$userId]);$supplierPaymentId=(int)$this->db->insertID();if($pay['payment_mode']==='cash'){ $session=$this->cash->openSessionForLocation($locationId);if(!$session)throw new RuntimeException('Open the counter cash session before posting a cash purchase.');$this->cash->postGeneric((int)$session['id'],'supplier_payment','out',$applyPrior,'supplier_payment',$supplierPaymentId,$userId,'Supplier payable settlement during purchase '.$no);}}
+    if($applyCurrent>0){$this->db->table('purchase_payments')->insert(['purchase_id'=>$id,'payment_mode'=>$pay['payment_mode'],'amount'=>$applyCurrent,'reference_no'=>$pay['reference_no'],'payment_at'=>$at,'paid_by'=>$userId]);if($pay['payment_mode']==='cash')$cashPurchase+=$applyCurrent;}
+    if($applyPrior>0){$paymentNo='SP'.date('YmdHis').'-'.random_int(100,999);$this->db->table('supplier_payments')->insert(['payment_no'=>$paymentNo,'location_id'=>$locationId,'supplier_id'=>$supplierId,'status'=>'posted','amount'=>$applyPrior,'payment_mode'=>$pay['payment_mode'],'payment_at'=>$at,'reference_no'=>$pay['reference_no'],'notes'=>'Applied to previous supplier payable during purchase '.$no,'created_by'=>$userId]);$supplierPaymentId=(int)$this->db->insertID();if($pay['payment_mode']==='cash'){ $session=$this->cash->openSessionForLocation($locationId);if(!$session)throw new RuntimeException('Open the counter cash session before posting a cash purchase.');$this->cash->postGeneric((int)$session['id'],'supplier_payment','out',$applyPrior,'supplier_payment',$supplierPaymentId,$userId,'Supplier payable settlement during purchase '.$no,$at);}}
     $remainingCurrent=max(0,$remainingCurrent-(float)$pay['amount']);
    }
-   if($cashPurchase>0){$session=$this->cash->openSessionForLocation($locationId);if(!$session)throw new RuntimeException('Open the counter cash session before posting a cash purchase.');$this->cash->postGeneric((int)$session['id'],'purchase_cash','out',$cashPurchase,'purchase',$id,$userId,'Purchase cash');}
+   if($cashPurchase>0){$session=$this->cash->openSessionForLocation($locationId);if(!$session)throw new RuntimeException('Open the counter cash session before posting a cash purchase.');$this->cash->postGeneric((int)$session['id'],'purchase_cash','out',$cashPurchase,'purchase',$id,$userId,'Purchase cash',$at);}
    if(!$this->db->transStatus())throw new RuntimeException('Purchase posting failed.');
    (new CostService())->addPurchaseLayers($id);
-   $this->db->transCommit();AuditService::log('CREATE','purchase',$id,null,['purchase_no'=>$no,'total'=>$total,'amount_paid'=>$paid,'current_credit'=>$credit,'previous_payable'=>$previousPayable,'new_payable'=>$newPayable],$userId,$locationId);return ['id'=>$id,'purchase_no'=>$no,'total'=>$total,'previous_payable'=>$previousPayable,'amount_paid'=>$paid,'balance_payable'=>$newPayable];
+   $this->db->transCommit();AuditService::log('CREATE','purchase',$id,null,['purchase_no'=>$no,'transaction_at'=>$at,'backdate_reason'=>$backdateReason,'total'=>$total,'amount_paid'=>$paid,'current_credit'=>$credit,'previous_payable'=>$previousPayable,'new_payable'=>$newPayable],$userId,$locationId);return ['id'=>$id,'purchase_no'=>$no,'total'=>$total,'previous_payable'=>$previousPayable,'amount_paid'=>$paid,'balance_payable'=>$newPayable];
   }catch(\Throwable $e){$this->db->transRollback();throw $e;}
  }
  /**

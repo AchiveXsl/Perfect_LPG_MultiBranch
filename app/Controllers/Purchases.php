@@ -68,7 +68,7 @@ class Purchases extends Controller
         $purchaseDetails = [];
         if ($activeTab === 'history') {
             $history = $db->table('purchases p')
-                ->select('p.id, p.purchase_no, p.transaction_at, p.subtotal, p.discount_amount, p.total_amount, p.credit_amount, p.status, p.voided_at, p.void_reason, p.notes, s.name AS supplier_name, sp.name AS plant_name, vu.full_name AS voided_by_name, COALESCE(SUM(pp.amount), 0) AS amount_paid')
+                ->select('p.id, p.purchase_no, p.transaction_at, p.subtotal, p.discount_amount, p.total_amount, p.credit_amount, p.status, p.voided_at, p.void_reason, p.notes, p.backdate_reason, s.name AS supplier_name, sp.name AS plant_name, vu.full_name AS voided_by_name, COALESCE(SUM(pp.amount), 0) AS amount_paid')
                 ->join('suppliers s', 's.id = p.supplier_id')
                 ->join('supplier_plants sp', 'sp.id = p.plant_id', 'left')
                 ->join('users vu', 'vu.id = p.voided_by', 'left')
@@ -158,6 +158,7 @@ class Purchases extends Controller
             'supplierBalances' => $supplierBalances,
             'plants'           => $db->table('supplier_plants')->where('is_active', 1)->orderBy('name')->get()->getResultArray(),
             'canVoidPurchases' => $canVoidPurchases,
+            'cashOpenedAt' => (new \App\Services\CashService())->openSessionForLocation((int) session()->get('location_id'))['opened_at'] ?? null,
             'emptyStock'       => $emptyStock,
             'branches'         => $branches,
             'headOfficeId'     => $split ? BranchContext::currentId() : BranchContext::headOfficeId(),
@@ -229,6 +230,8 @@ class Purchases extends Controller
                 'lines'           => $lines,
                 'payments'        => $payments,
                 'notes'           => $this->request->getPost('notes'),
+                'transaction_at'  => $this->request->getPost('transaction_at'),
+                'backdate_reason' => $this->request->getPost('backdate_reason'),
             ], (int) session()->get('user_id'), (int) session()->get('location_id'));
 
             return redirect()->to('/purchases')->with(
