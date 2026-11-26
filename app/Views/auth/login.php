@@ -52,9 +52,9 @@ $alert = static fn (string $type, string $icon, string $body, string $align = 'c
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= esc(($title ?? 'Login') . ' — ' . $companyName) ?></title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700;800&family=DM+Sans:wght@400;500;600;700&family=Noto+Nastaliq+Urdu:wght@500&family=Noto+Naskh+Arabic:wght@500;600;700&display=swap" rel="stylesheet">
+    <link href="<?= base_url('lib/npm/') ?>bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="<?= base_url('lib/npm/') ?>bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+    <link href="<?= base_url('lib/fonts/fonts-1.css') ?>" rel="stylesheet">
     <link rel="stylesheet" href="<?= base_url('css/lpg-theme.css') ?>">
     <script src="<?= base_url('js/lpg-busy.js') ?>?v=<?= (int) @filemtime(FCPATH . 'js/lpg-busy.js') ?>"></script>
 </head>

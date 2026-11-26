@@ -8,7 +8,7 @@ $uiDir  = \App\Libraries\UiLanguage::meta($uiLang)['dir'];
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title><?= esc($title ?? 'Database Installation Setup') ?></title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/<?= $uiDir === 'rtl' ? 'bootstrap.rtl.min.css' : 'bootstrap.min.css' ?>" rel="stylesheet">
+    <link href="<?= base_url('lib/npm/') ?>bootstrap@5.3.3/dist/css/<?= $uiDir === 'rtl' ? 'bootstrap.rtl.min.css' : 'bootstrap.min.css' ?>" rel="stylesheet">
     <?= view('partials/i18n_head', ['uiLang' => $uiLang]) ?>
     <style>
         body { min-height:100vh; background:#172534; display:flex; align-items:center; padding:24px 0; }

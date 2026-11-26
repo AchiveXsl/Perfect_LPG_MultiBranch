@@ -10,7 +10,7 @@ if ($uiLang === Ui::DEFAULT_LANG) {
     return;
 }
 ?>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Naskh+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="<?= base_url('lib/fonts/fonts-4.css') ?>" rel="stylesheet">
 <link rel="stylesheet" href="<?= base_url('css/lpg-rtl.css') ?>?v=<?= (int) @filemtime(FCPATH . 'css/lpg-rtl.css') ?>">
 <script>
 // Hidden until the translator has run; never stay hidden if it fails to load.

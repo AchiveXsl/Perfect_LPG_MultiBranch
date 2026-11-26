@@ -25,6 +25,70 @@ async function pickOption(select, pattern) {
   expect(value, 'option matching ' + pattern).not.toBeNull();
   await select.selectOption(value);
 }
+// C6 "Current Gas KG" on Inventory (7th column), read before and after the E2E-004 sale.
+let c6GasBefore = null;
+async function c6Gas(page) {
+  await page.goto('/inventory', { waitUntil: 'load' });
+  // Cells join without spaces ("C6" + "6 kg" = "C66 kg"), so match the cell / bold code exactly.
+  const row = page.locator('table tbody tr').filter({ has: page.locator('td, td strong', { hasText: /^\s*C6\s*$/ }) }).first();
+  return Number((await row.locator('td').nth(6).innerText()).replace(/,/g, ''));
+}
+
+// Creates what the cases below need when it is missing, so the spec runs on a fresh database:
+// cylinder type C6 (6 kg), customer QA-E2E-CUST, one filled C6 cylinder, a retail gas price,
+// and POS source-cylinder selection (individual cylinder tracking) switched on.
+test('E2E-000 Seed QA data', async ({ page }) => {
+  test.setTimeout(300_000); // many screens; a busy PC needs more than the default 2 minutes
+  await login(page);
+  await page.goto('/cylinder-types', { waitUntil: 'load' });
+  if (!(await page.locator('table tbody tr').filter({ has: page.locator('td', { hasText: /^\s*C6\s*$/ }) }).count())) {
+    await page.locator('button[data-bs-target="#form"]').first().click();
+    await page.fill('#type_code', 'C6');
+    await page.fill('#type_name', '6 kg');
+    await page.fill('#type_capacity_kg', '6');
+    await page.fill('#type_tare_weight_kg', '0');
+    await page.fill('#type_empty_cylinder_price', '2500');
+    await page.fill('#type_sort_order', '5');
+    await Promise.all([page.waitForLoadState('load'), page.locator('#form button.btn-primary').click()]);
+  }
+  await page.goto('/customers', { waitUntil: 'load' });
+  if (!(await page.locator('table tbody tr').filter({ hasText: 'QA-E2E-CUST' }).count())) {
+    await page.locator('[data-bs-target="#form"]').first().click();
+    await page.fill('#form input[name="code"]', 'QA-E2E-CUST');
+    await page.fill('#form input[name="name"]', 'QA E2E Customer');
+    await Promise.all([page.waitForLoadState('load'), page.locator('#form button.btn-primary').click()]);
+  }
+  await page.goto('/shop-settings', { waitUntil: 'load' });
+  await page.click('button[data-bs-target="#pos"]');
+  await page.setChecked('#individualCylinderTracking', true);
+  await page.setChecked('#allowPosSourceCylinderSelection', true);
+  await Promise.all([page.waitForLoadState('load'), page.getByRole('button', { name: 'Save Shop Settings' }).click()]);
+  await page.goto('/rates', { waitUntil: 'load' });
+  const perKg = page.locator('#rates-retail input[name="rates[gas_per_kg]"]');
+  if (!Number(await perKg.inputValue())) {
+    await perKg.fill('300');
+    await page.fill('#rates-retail input[name="reason"]', 'QA runtime seed');
+    await Promise.all([page.waitForLoadState('load'), page.locator('#rates-retail .rate-save').click()]);
+  }
+  if ((await c6Gas(page)) < 2) {
+    await page.goto('/inventory/opening', { waitUntil: 'load' });
+    await page.locator('button[onclick="prepareAdd()"]').click();
+    const d = new Date(Date.now() - 864e5), p = (n) => String(n).padStart(2, '0');
+    await page.fill('#inventoryDate', `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`);
+    await pickOption(page.locator('#cylinderTypeId'), /^C6\b/);
+    await page.fill('#quantity', '1');
+    await page.fill('#actualGasWeight', '6');
+    if (await page.locator('#cylinderCost').count()) await page.fill('#cylinderCost', '2500');
+    await Promise.all([page.waitForLoadState('load'), page.getByRole('button', { name: 'Save Opening Inventory' }).click()]);
+  }
+  expect(await c6Gas(page)).toBeGreaterThanOrEqual(2);
+  // E2E-004 is a cash sale: it needs an open counter session.
+  await page.goto('/cash', { waitUntil: 'load' });
+  const open = page.locator('form[action$="cash/open"] button');
+  if (await open.count()) await Promise.all([page.waitForLoadState('load'), open.first().click()]);
+  await expect(page.locator('form[action$="cash/close"]')).toHaveCount(1);
+});
+
 test('E2E-001 Login succeeds', async ({ page }) => {
   await login(page); await expect(page.locator('body')).toContainText('Dashboard');
 });
@@ -186,7 +250,7 @@ test('E2E-003a POS transaction type switch rebuilds isolated detail UI without p
   expect(pageErrors).toEqual([]);
 });
 test('E2E-004 Actual gas sale posts successfully', async ({ page }) => {
-  await login(page); await page.goto('/sales',{waitUntil:'networkidle'});
+  await login(page); c6GasBefore = await c6Gas(page); await page.goto('/sales',{waitUntil:'networkidle'});
   await page.locator('#transactionType').selectOption('gas_sale');
   // The POS shows a searchable customer box and keeps #customer_id hidden: set it the way the box does.
   await page.locator('#customer_id').evaluate((s, label) => {
@@ -197,7 +261,8 @@ test('E2E-004 Actual gas sale posts successfully', async ({ page }) => {
   const line=page.locator('#lines tbody tr').first();
   await pickOption(line.locator('.cyl'), /^C6 — 6 kg/);
   await expect(line.locator('.sourceCyl')).toBeEnabled();
-  await pickOption(line.locator('.sourceCyl'), /QA-E2E-C6-001/);
+  // First filled C6 source cylinder (codes are generated by Opening Inventory).
+  await pickOption(line.locator('.sourceCyl'), /^(?!Select)\S/);
   await line.locator('.entryValue').fill('2');
   const total=await page.locator('#saleTotal').innerText();
   expect(Number(total)).toBeGreaterThan(0);
@@ -213,7 +278,8 @@ test('E2E-005 Posted gas sale appears in Sale History with inventory movement', 
   await page.locator('#historyCustomer').fill('QA-E2E-CUST');
   await page.locator('#historySearch').click(); await page.waitForTimeout(500);
   const row=page.locator('#saleHistoryBody tr.sale-history-row').first();
-  await expect(row).toBeVisible(); await expect(row).toContainText('QA-E2E-CUST');
+  // Sale History shows the customer's name (the search box accepts the code).
+  await expect(row).toBeVisible(); await expect(row).toContainText(/QA-E2E-CUST|QA E2E Customer/);
   await expect(row).toContainText(/Gas Sale/i); await expect(row).toContainText(/POSTED/i);
   await row.click();
   await expect(page.locator('#saleDetailsBody')).toContainText(/Inventory \/ Reversal Movements/i);
@@ -221,17 +287,20 @@ test('E2E-005 Posted gas sale appears in Sale History with inventory movement', 
   await expect(page.locator('#saleDetailsBody')).toContainText(/out/i);
 });
 test('E2E-006 Gas stock is reduced after the actual sale', async ({ page }) => {
-  await login(page); await page.goto('/inventory',{waitUntil:'networkidle'});
-  const row=page.locator('table tbody tr').filter({hasText:'C6'}).first();
-  await expect(row).toBeVisible(); await expect(row).toContainText('4.000 KG');
+  await login(page);
+  expect(c6GasBefore, 'E2E-004 must run first').not.toBeNull();
+  expect(await c6Gas(page)).toBeCloseTo(c6GasBefore - 2, 2);
 });
 test('E2E-007 POS rejects an invalid zero-quantity gas sale without posting', async ({ page }) => {
   await login(page); await page.goto('/sales',{waitUntil:'networkidle'});
   const line=page.locator('#lines tbody tr').first();
-  await pickOption(line.locator('.cyl'), /^C6 — 6 kg/); await line.locator('.entryValue').fill('0');
+  await pickOption(line.locator('.cyl'), /^C6 — 6 kg/);
+  // Source-cylinder selection is on (E2E-000): pick one, so the quantity check is what refuses the sale.
+  if (await line.locator('.sourceCyl').isEnabled()) await pickOption(line.locator('.sourceCyl'), /^(?!Select)\S/);
+  await line.locator('.entryValue').fill('0');
   await page.locator('.payment .amount').first().fill('0'); await page.locator('#saveBtn').click();
   await expect(page.locator('#posValidationAlert')).toBeVisible();
-  await expect(page.locator('#posValidationAlert')).toContainText(/valid quantity|invalid/i);
+  await expect(page.locator('#posValidationAlert')).toContainText(/valid quantity|invalid|must be greater than zero/i);
   await expect(page).toHaveURL(/\/sales$/);
 });
 test('E2E-008 Configuration navigation remains available after POS regression', async ({ page }) => {
@@ -278,9 +347,9 @@ test('E2E-012 Receipt History shows POS-generated payment with its source', asyn
   const history = page.locator('table.datatable').last();
   await expect(history.locator('thead')).toContainText('Source');
   await expect(history.locator('thead')).toContainText('Status');
-  const posRow = history.locator('tbody tr').filter({ hasText: /POS — gas sale \/ Sale Payment/i }).first();
+  // Other specs post POS sales too: take the QA customer's POS payment (E2E-004).
+  const posRow = history.locator('tbody tr').filter({ hasText: /POS — gas sale \/ Sale Payment/i }).filter({ hasText: /QA-E2E-CUST|QA E2E Customer/i }).first();
   await expect(posRow).toBeVisible();
-  await expect(posRow).toContainText(/QA-E2E-CUST|QA E2E Customer/i);
   await expect(posRow).toContainText(/CASH|CHEQUE|ONLINE/i);
   await expect(posRow).toContainText(/POSTED/i);
   expect(pageErrors).toEqual([]);

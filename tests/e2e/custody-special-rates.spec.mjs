@@ -55,9 +55,24 @@ async function optionValue(select, startsWith) {
   return option.getAttribute('value');
 }
 
+/**
+ * Opens the POS. After a posting the POS reloads itself to sales; a goto at that moment is reported as
+ * "interrupted by another navigation". Let that reload finish instead of failing.
+ */
+async function openSales() {
+  await page.waitForLoadState('load');
+  try {
+    await page.goto('sales');
+  } catch (e) {
+    if (!/interrupted by another navigation/i.test(String(e))) throw e;
+    await page.waitForURL(/\/sales(\?|$)/);
+    await page.waitForLoadState('load');
+  }
+}
+
 /** Stock as the POS sees it, for the C11 type and the two customers. */
 async function stockSnapshot() {
-  await page.goto('sales');
+  await openSales();
   const s = await page.evaluate(({ typeId, ids }) => {
     const units = (filledUnits[typeId] || []);
     const custody = allCustomerCustody.filter((u) => Object.values(ids).includes(String(u.customer_id)));
@@ -92,7 +107,7 @@ test.beforeAll(async ({ browser }) => {
   page = await browser.newPage({ baseURL: test.info().project.use.baseURL });
   page.on('dialog', (d) => d.accept());
   await login();
-  await page.goto('sales');
+  await openSales();
   typeId = await optionValue(page.locator('#lines tbody tr .cyl').first(), TYPE);
   expect(typeId, `Cylinder type ${TYPE} must exist`).toBeTruthy();
 });
@@ -109,7 +124,7 @@ test('CS-01 Two new customers are defined', async () => {
     }
     await expect(page.locator('table.datatable tbody tr', { hasText: c.name })).toHaveCount(1);
   }
-  await page.goto('sales');
+  await openSales();
   for (const c of CUSTOMERS) ids[c.name] = await page.locator('#customer_id option').filter({ hasText: new RegExp('^' + c.name + '$') }).first().getAttribute('value');
   log('Customers:', JSON.stringify(ids));
 });
@@ -142,7 +157,7 @@ test('CS-03 Stock before issuing', async () => {
 
 for (const c of CUSTOMERS) {
   test(`CS-04 Issue one filled ${TYPE} to ${c.name} at the special rate`, async () => {
-    await page.goto('sales');
+    await openSales();
     await page.selectOption('#transactionType', 'security_deposit');
     await pickCustomer(ids[c.name]);
     await expect(page.locator('#specialRateBadge')).toBeVisible();
@@ -190,7 +205,7 @@ test('CS-05 Stock after issuing', async () => {
 
 for (const c of CUSTOMERS) {
   test(`CS-06 ${c.name} returns the cylinder and the deposit is refunded`, async () => {
-    await page.goto('sales');
+    await openSales();
     await page.selectOption('#transactionType', 'cylinder_return');
     await pickCustomer(ids[c.name]);
     await page.click('#openReturnPicker');

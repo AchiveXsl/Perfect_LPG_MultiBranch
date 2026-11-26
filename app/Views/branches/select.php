@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Select Branch — Perfect LPG</title>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="<?= base_url('lib/npm/') ?>bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="<?= base_url('lib/npm/') ?>bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+<link href="<?= base_url('lib/fonts/fonts-3.css') ?>" rel="stylesheet">
 <style>
 :root{--brand:#06382F;--accent:#E3A01A;--page:#f4f6f9;--text:#172033;--muted:#64748b;--border:#e2e8f0}
 body{font-family:'DM Sans',system-ui,sans-serif;background:var(--page);color:var(--text);min-height:100vh}
