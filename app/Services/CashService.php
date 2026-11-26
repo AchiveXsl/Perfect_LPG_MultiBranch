@@ -31,10 +31,19 @@ class CashService {
  public function openSessionForLocation(int $locationId, ?bool $forPosting=null): ?array {
   $session=$this->findOpenSession($locationId);
   if($forPosting===null) $forPosting=!is_cli() && strtoupper((string)service('request')->getMethod())==='POST';
-  if($session && $forPosting && substr((string)$session['opened_at'],0,10)!==BranchContext::today($locationId)) {
+  if($session && $forPosting && substr((string)$session['opened_at'],0,10)!==BranchContext::today($locationId) && !self::overnightShift($session,$locationId)) {
    throw self::otherDateConflict($session,BranchContext::today($locationId),'post cash');
   }
   return $session;
+ }
+ /**
+  * A branch that follows today's date (no System Date set) may keep yesterday's session open past
+  * midnight, as a normal overnight shift. The one-session-per-date rule protects back-dated and
+  * future work, where the branch has a System Date set.
+  */
+ public static function overnightShift(array $session, int $locationId): bool {
+  return BranchContext::storedSystemDate($locationId)===null
+   && substr((string)$session['opened_at'],0,10)===date('Y-m-d',strtotime(BranchContext::today($locationId).' -1 day'));
  }
  /** True when the open session belongs to a date other than the System Date. */
  public static function sessionDateMismatch(?array $session, int $locationId): bool {
@@ -99,7 +108,7 @@ class CashService {
    $summary=$this->summary($sessionId);
    // A session closes on its own date: when the System Date has moved on, it closes at the end of that day.
    $sessionDate=substr((string)$session['opened_at'],0,10);
-   $closedAt=$sessionDate===BranchContext::today()?BranchContext::now():$sessionDate.' 23:59:59';
+   $closedAt=($sessionDate===BranchContext::today() || self::overnightShift($session,BranchContext::currentId()))?BranchContext::now():$sessionDate.' 23:59:59';
    if($closedAt<$session['opened_at']) $closedAt=$session['opened_at'];
    $this->db->table('cash_sessions')->where('id',$sessionId)->update(['closed_by'=>$userId,'closed_at'=>$closedAt,'counted_cash'=>$countedCash,'status'=>'closed','notes'=>trim($notes)?:$summary['session']['notes']]);
    if(!$this->db->transStatus()) throw new RuntimeException('Cash session could not be closed.');

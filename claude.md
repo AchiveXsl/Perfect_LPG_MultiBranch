@@ -291,8 +291,16 @@ Screen: Cash & Expenses → Loans (`/loans`), permission `LOAN_MANAGE` (Admin by
 ## System Date (owner decision 2026-11-26)
 - Each branch has a System Date (`locations.system_date`, migration 054; NULL = follow today), picked in the top bar after the branch switch (`partials/system_date`, `SystemDate::save`, permission `SYSTEM_DATE_CHANGE`, Admin by default, audited). It stays until changed. Past and future dates are allowed; amber with Back-dated / Future when not today.
 - Date business data only through `BranchContext::now()` / `today()` / `nowTs()` / `nowLocal()` (System Date + clock time). `realNow()` / `created_at` / `entered_at` keep the real entry time (migration 054 adds `entered_at` to the transaction tables; `gas_decants`, `inventory_adjustments`, `cylinder_fills` use `created_at` as the business date and `entered_at` as real time). No back-date reason or days-back limit applies to a transaction dated on the System Date.
-- Counter cash: one session per date. Cash posts are refused while the open session belongs to another date (`CashService::openSessionForLocation`).
+- Counter cash: one session per date. Cash posts are refused while the open session belongs to another date (`CashService::openSessionForLocation`). Exception: a branch that follows today (no System Date set) may keep yesterday's session open past midnight (`CashService::overnightShift`).
 - History stays consistent: every posting that moves cylinders calls `TimelineGuard::mark()` / `check()` around its inserts and is refused when a touched cylinder already has a later movement. Pick lists and automatic allocation use `TimelineGuard::freeAtSql()`, so they offer only cylinders free at the System Date.
 - Refusals throw `App\Exceptions\SystemDateConflict` (title, why, later transactions, what to do). `public/js/lpg-system-date.js` shows it as a popup from the `X-LPG-Conflict` header (AJAX) or the `system_date_conflict` flash (forms), with buttons such as Change System Date.
 - Stock screens use `AsOfStock::unitsTable()` (state per cylinder at the end of the System Date, rebuilt from movements); `SalesService::customerBalances()` counts entries up to the end of the System Date.
 - Browser tests: `tests/e2e/systemdate.spec.mjs`, cases in `systemdate_testcase.md`.
+
+## Quality thumb rule (owner, 2026-11-26)
+**0 errors / 100% quality after every change or modification.** Nothing is merged or reported done until the full gate is green:
+1. `php -l` on every changed PHP file.
+2. New migrations run on a fresh database, then run again (idempotent).
+3. All Playwright specs (`tests/e2e/*.spec.mjs`), one spec at a time on one test server (parallel runs overload a single PC) in this order: pricing, custody-special-rates, multibranch, systemdate (SD-09 needs the second branch multibranch creates), lpg-runtime. Use a multi-worker server (Apache, or nginx + several php-cgi); PHP's built-in server drops parallel requests.
+4. Every failure is fixed, including pre-existing test or data problems found on the way; re-run until 0 failures.
+5. Record exact pass / fail counts in the matching testcase file, then commit, PR and merge.

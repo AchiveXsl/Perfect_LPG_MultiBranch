@@ -63,6 +63,11 @@ class StockTransferService
         if ($ts === false) throw new RuntimeException('Invalid transfer date.');
         $at = date('Y-m-d H:i:s', $ts);
         if (date('Y-m-d', $ts) === \App\Services\BranchContext::today() && $at > $now) $at = $now; // today's date with a later clock time: now
+        // The form fills the time (to the minute) when the page opens, so a time up to RateResolver's
+        // NOW window old means "now". Otherwise a cylinder moved a few seconds earlier in the same
+        // minute would make the dispatch look older than its last movement.
+        $nowTs = (int) strtotime($now);
+        if ($ts <= $nowTs && $ts > $nowTs - RateResolver::NOW_WINDOW_SECONDS) $at = $now;
         if ($at > $now) throw new RuntimeException('The transfer date cannot be in the future.');
         $earliest = $this->earliestDate($locationId);
         if ($at < $earliest . ' 00:00:00') throw new RuntimeException('The transfer date cannot be before ' . date('d M Y', strtotime($earliest)) . ' (Shop Settings).');

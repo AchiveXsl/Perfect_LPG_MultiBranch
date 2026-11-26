@@ -37,7 +37,7 @@ $isVoided = $receipt['status'] !== 'posted';
 <div class="actions"><button type="button" onclick="window.print()">Print</button><button type="button" id="savePdfBtn" title="Opens the print dialog. Choose Save as PDF as the destination.">Save as PDF</button><button type="button" id="shareWaBtn" style="background:#25d366;color:#fff;border:1px solid #1da851">WhatsApp</button><button type="button" id="closeBtn" onclick="window.close()">Close</button></div>
 <script>if(window.self!==window.top){var cb=document.getElementById("closeBtn");if(cb)cb.style.display="none";}</script>
 <script>(function(){var b=document.getElementById("savePdfBtn");if(!b)return;var name=<?= json_encode('Receipt-' . ($receipt['receipt_no'] ?? '')) ?>,old=document.title;b.onclick=function(){document.title=name;window.onafterprint=function(){document.title=old;window.onafterprint=null;};window.print();};})();</script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="<?= base_url('lib/cdnjs/') ?>html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
 (function(){
   var btn=document.getElementById("shareWaBtn");if(!btn)return;

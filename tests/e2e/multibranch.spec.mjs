@@ -29,10 +29,30 @@ async function switchBranch(page, name) {
   await expect(page.locator('#branchSwitch')).toContainText(name);
 }
 
+// Stock a branch already had before this spec (other specs may have run on the same database),
+// read in MB-00. Expected figures below are what this spec itself adds; the baseline is added on top.
+const baseStock = {};
+async function readStock(page, branch) {
+  const row = page.locator('.card', { hasText: 'Stock by Branch' }).locator('tbody tr', { hasText: branch });
+  if (!(await row.count())) {
+    // One branch only: the report has no by-branch table, its summary cards are that branch's totals.
+    const card = async (label) => Number(((await page.locator('.card-body', { hasText: label }).first().locator('h3').innerText()).match(/[\d,.]+/) || ['0'])[0].replace(/,/g, ''));
+    return { kg: await card('Gas Stock'), filled: await card('Filled Cylinders'), empty: await card('Empty Cylinders') };
+  }
+  const t = (await row.first().locator('td').allInnerTexts()).map(s => Number(s.replace(/,/g, '')));
+  return { kg: t[1] || 0, filled: t[2] || 0, empty: t[3] || 0 };
+}
+
 // Inventory Detail "Stock by Branch" row: Branch | Gas KG | Filled | Empty.
 async function expectStock(page, branch, gasKg, filled, empty) {
+  const b = baseStock[branch] || { kg: 0, filled: 0, empty: 0 };
   const row = page.locator('.card', { hasText: 'Stock by Branch' }).locator('tbody tr', { hasText: branch });
-  await expect(row.locator('td')).toHaveText([branch, gasKg, filled, empty]);
+  await expect(row.locator('td')).toHaveText([
+    branch,
+    (Number(gasKg) + b.kg).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    String(Number(filled) + b.filled),
+    String(Number(empty) + b.empty),
+  ]);
 }
 
 const alertText = page =>page.locator('.alert').allInnerTexts().then(t => t.join(' | '));
@@ -48,6 +68,9 @@ test('MB-00 migrations run and admin signs in', async ({ page }) => {
   // Only one branch so far: straight to the dashboard.
   await expect(page).toHaveURL(/dashboard/);
   await expect(page.locator('.topbar')).toContainText(hoName);
+  // Baseline stock left by other specs on this database.
+  await page.goto('reports/inventory-detail?branches=all', { waitUntil: 'load' });
+  baseStock[hoName] = await readStock(page, hoName);
 });
 
 test('MB-SETUP create Branch Two, supplier and users', async ({ page }) => {

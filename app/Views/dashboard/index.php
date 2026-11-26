@@ -252,7 +252,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     function loadLib() {
         if (window.Chart) return Promise.resolve();
-        return new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js'; s.onload = res; s.onerror = () => rej(new Error('Chart library could not be loaded. Check the internet connection.')); document.head.appendChild(s); });
+        return new Promise((res, rej) => { const s = document.createElement('script'); s.src = '<?= base_url('lib/npm/') ?>chart.js@4.4.1/dist/chart.umd.min.js'; s.onload = res; s.onerror = () => rej(new Error('Chart library could not be loaded. Check the internet connection.')); document.head.appendChild(s); });
     }
     function draw(id, cfg, hasData, emptyId) {
         if (charts[id]) charts[id].destroy();
