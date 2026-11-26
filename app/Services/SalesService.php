@@ -61,7 +61,7 @@ class SalesService
     protected function postHeaderTransaction(array $payload,int $userId,int $locationId,string $headerType): array
     {
         $customerId=!empty($payload['customer_id'])?(int)$payload['customer_id']:null;
-        $transactionAt=str_replace('T',' ',trim((string)($payload['transaction_at']??\App\Services\BranchContext::now())));
+        $transactionAt=str_replace('T',' ',trim((string)(($payload['transaction_at']??'')?:\App\Services\BranchContext::now())));
         $transactionTs=strtotime($transactionAt);
         if($transactionTs===false) throw new RuntimeException('Invalid transaction date/time.');
         if($transactionTs>\App\Services\BranchContext::nowTs()+self::FUTURE_GRACE_SECONDS) throw new RuntimeException('Transaction date/time cannot be in the future.');

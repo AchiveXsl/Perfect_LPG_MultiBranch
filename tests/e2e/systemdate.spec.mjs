@@ -95,6 +95,28 @@ test.afterAll(async ({ browser }) => {
   await page.close();
 });
 
+// Every case leaves the branch on today with no open counter session, so later cases and other specs
+// never meet a back-dated session (the one-session-per-date rule would refuse their cash).
+test.afterEach(async ({ page }) => {
+  try { await setSystemDate(page, null); await closeOpenCash(page); } catch { /* best effort */ }
+});
+
+test('SD-00 setup: filled stock that existed before the back date', async ({ page }) => {
+  // Opening stock dated ten days ago, so cylinders are free on the back date (SD-06, SD-07, SD-08).
+  await login(page);
+  await setSystemDate(page, null);
+  const d = new Date(today.getTime() - 10 * 86400000);
+  await page.goto('inventory/opening', { waitUntil: 'load' });
+  await page.locator('button[onclick="prepareAdd()"]').click();
+  await page.fill('#inventoryDate', iso(d));
+  await page.selectOption('#cylinderTypeId', { index: 1 });
+  await page.fill('#quantity', '3');
+  await page.fill('#actualGasWeight', '11.8');
+  if (await page.locator('#cylinderCost').count()) await page.fill('#cylinderCost', '4000');
+  await Promise.all([page.waitForLoadState('load'), page.getByRole('button', { name: 'Save Opening Inventory' }).click()]);
+  await expect(page.locator('.alert-danger')).toHaveCount(0);
+});
+
 test('SD-01 top bar shows the System Date after the branch switch, today by default', async ({ page }) => {
   await login(page);
   await setSystemDate(page, null);
@@ -171,7 +193,8 @@ test('SD-05 counter cash: one session per System Date, cash of another date is r
   await expect(modal.getByRole('link', { name: 'Go to Counter Cash' })).toBeVisible();
   await expect(modal.getByRole('button', { name: /Change System Date to/ })).toBeVisible();
   // The popup's fix: go back to the session's date.
-  await Promise.all([page.waitForLoadState('load'), modal.getByRole('button', { name: /Change System Date to/ }).click()]);
+  // The button saves the date, then reloads the page: wait for that reload.
+  await Promise.all([page.waitForEvent('load', { timeout: 60_000 }), modal.getByRole('button', { name: /Change System Date to/ }).click()]);
   await expect(page.locator('#systemDateBox')).toHaveAttribute('data-state', 'today');
 });
 
@@ -199,7 +222,7 @@ test('SD-07 a posting before a later movement of the same cylinder is blocked wi
   await openCash(page);
   const t = await stockedType(page);
   test.skip(!t, 'No filled stock.');
-  const sale = await postWalkinGas(page, t[0], 1, 300, '');
+  const sale = await postWalkinGas(page, t[0], 1, 300, `${iso(today)}T${pad(today.getHours())}:${pad(today.getMinutes())}`);
   expect(sale.json.success, JSON.stringify(sale.json)).toBeTruthy();
   await closeOpenCash(page);
   // Go back three days and void today's sale: the void would put the gas back before the sale took it.
@@ -222,7 +245,8 @@ test('SD-07 a posting before a later movement of the same cylinder is blocked wi
   await expect(modal).toContainText('What you can do');
   await expect(modal).toContainText('Use another cylinder');
   // Fix offered in the popup: move the System Date to the later transaction's date.
-  await Promise.all([page.waitForLoadState('load'), modal.getByRole('button', { name: /Change System Date to/ }).click()]);
+  // The button saves the date, then reloads the page: wait for that reload.
+  await Promise.all([page.waitForEvent('load', { timeout: 60_000 }), modal.getByRole('button', { name: /Change System Date to/ }).click()]);
   await expect(page.locator('#systemDateLabel')).toHaveText(dmy(today));
   await closeOpenCash(page);
 });
