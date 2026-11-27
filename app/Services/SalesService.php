@@ -1153,7 +1153,33 @@ class SalesService
     protected function paymentCustom(array $rows): int {return array_reduce($rows,static fn($c,$r)=>$c||(int)($r['custom_rate_flag']??0)?1:0,0);}
 
     /** Voids a standalone customer receipt: the customer's balance goes back up and any cash is taken out again. Returns the customer id. */
-    public function voidCustomerReceipt(int $receiptId,int $userId,int $locationId,string $reason): int
+    /**
+     * The counter session each cash receipt was posted into, keyed by receipt id
+     * (id, opened_at, closed_at, status, register_code). Used to offer where a void's cash reversal goes.
+     */
+    public function receiptCashSessions(array $receiptIds): array
+    {
+        $receiptIds=array_values(array_filter(array_map('intval',$receiptIds)));
+        if(!$receiptIds) return [];
+        $out=[];
+        foreach($this->db->table('cash_transactions ct')
+            ->select('ct.reference_id receipt_id,cs.id,cs.opened_at,cs.closed_at,cs.status,cr.code register_code')
+            ->join('cash_sessions cs','cs.id=ct.cash_session_id')->join('cash_registers cr','cr.id=cs.register_id')
+            ->where(['ct.reference_type'=>'customer_receipt','ct.transaction_type'=>'customer_receipt','ct.direction'=>'in'])
+            ->whereIn('ct.reference_id',$receiptIds)->get()->getResultArray() as $r){
+            $out[(int)$r['receipt_id']]=$r;
+        }
+        return $out;
+    }
+
+    /**
+     * Voids a customer receipt. For a cash receipt the cash reversal (cash out) goes to:
+     *   'original' - the session the receipt was posted into, dated with the receipt date (allowed even when
+     *                that session is closed; its expected cash then changes after the count, the screen warns);
+     *   'current'  - the counter session open now, dated now (System Date + clock).
+     * When both are the same session no choice is needed. Owner decision 2026-11-27.
+     */
+    public function voidCustomerReceipt(int $receiptId,int $userId,int $locationId,string $reason,string $cashTarget=''): int
     {
         $reason=trim($reason);
         if($reason==='') throw new RuntimeException('Void reason is required.');
@@ -1167,11 +1193,23 @@ class SalesService
             $this->db->table('customer_receipts')->where('id',$receiptId)->update(['status'=>'voided']);
             if((string)$rec['payment_mode']==='cash'){
                 $cashRows=$this->db->table('cash_transactions')->where(['reference_type'=>'customer_receipt','reference_id'=>$receiptId,'transaction_type'=>'customer_receipt','direction'=>'in'])->get()->getResultArray();
+                $current=$this->cash->openSessionForLocation($locationId,false);
                 foreach($cashRows as $cash){
+                    $originalId=(int)$cash['cash_session_id'];
+                    $same=$current && (int)$current['id']===$originalId;
+                    $target=$same?'original':$cashTarget;
+                    if($target==='current'){
+                        if(!$current) throw new RuntimeException('No counter session is open. Open one on Counter Cash, or choose the receipt\'s own session for the cash reversal.');
+                        $sessionId=(int)$current['id']; $at=\App\Services\BranchContext::now(); $where='current session';
+                    }elseif($target==='original'){
+                        $sessionId=$originalId; $at=(string)$rec['receipt_at']; $where='receipt session';
+                    }else{
+                        throw new RuntimeException('Choose where the cash reversal of receipt '.$rec['receipt_no'].' goes: the session it was received in, or the counter session open now.');
+                    }
                     $this->db->table('cash_transactions')->insert([
-                        'cash_session_id'=>$cash['cash_session_id'],'transaction_type'=>'customer_receipt','direction'=>'out',
-                        'amount'=>$cash['amount'],'transaction_at'=>\App\Services\BranchContext::now(),'reference_type'=>'customer_receipt_void','reference_id'=>$receiptId,
-                        'created_by'=>$userId,'notes'=>'Cash reversal of voided customer receipt '.$rec['receipt_no']
+                        'cash_session_id'=>$sessionId,'transaction_type'=>'customer_receipt','direction'=>'out',
+                        'amount'=>$cash['amount'],'transaction_at'=>$at,'reference_type'=>'customer_receipt_void','reference_id'=>$receiptId,
+                        'created_by'=>$userId,'notes'=>'Cash reversal of voided customer receipt '.$rec['receipt_no'].' ('.$where.')'
                     ]);
                 }
             }

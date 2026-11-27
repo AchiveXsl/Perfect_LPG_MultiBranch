@@ -168,7 +168,7 @@
             <td class="num"><?=$m($d['added'])?></td>
             <td class="num"><?=$m($d['made'])?></td>
             <td class="num">Rs. <?=number_format((float)$d['balance'],2)?></td>
-            <td class="sl-act text-end"><a href="#" class="small me-2 tl-link" data-tl="tl-<?=$d['kind']?>-<?=(int)$d['id']?>">Timeline</a><?php if(!$void && !empty($canVoid) && $d['voidable']): ?><button type="button" class="btn btn-sm btn-outline-danger sl-void-btn" data-action="<?=site_url('customers/receipts/void/'.$d['id'])?>" data-ref="<?=esc($d['ref'])?>">Void</button><?php endif; ?></td>
+            <td class="sl-act text-end"><a href="#" class="small me-2 tl-link" data-tl="tl-<?=$d['kind']?>-<?=(int)$d['id']?>">Timeline</a><?php if(!$void && !empty($canVoid) && $d['voidable']): ?><button type="button" class="btn btn-sm btn-outline-danger sl-void-btn" data-action="<?=site_url('customers/receipts/void/'.$d['id'])?>" data-ref="<?=esc($d['ref'])?>" data-cash="<?=esc(json_encode($d['cash_choice'] ?? null), 'attr')?>">Void</button><?php endif; ?></td>
           </tr>
           <?php endforeach; ?>
           <?php if(!$details): ?><tr><td colspan="9" class="text-center text-muted py-4">No sales or receipts yet.</td></tr><?php endif; ?>
@@ -184,13 +184,35 @@
   <input type="hidden" name="return_to" value="/customers/ledger/<?=(int)$customer['id']?>">
   <div class="modal-header"><h5 class="modal-title">Void <span id="slVoidRef"></span></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
   <div class="modal-body"><p class="small text-muted mb-2">The customer balance and any cash effect are reversed. The row stays in the ledger, struck through.</p>
+    <div id="slVoidCash" class="border rounded p-2 mb-2 d-none">
+      <div class="fw-semibold small mb-1">Where should the cash reversal (Rs. <span id="slVoidAmt"></span>) go?</div>
+      <div class="form-check"><input class="form-check-input" type="radio" name="cash_target" id="slCashOrig" value="original"><label class="form-check-label small" for="slCashOrig">The session the receipt was received in: <span id="slOrigLabel"></span> (dated the receipt date)</label></div>
+      <div class="form-check"><input class="form-check-input" type="radio" name="cash_target" id="slCashCur" value="current"><label class="form-check-label small" for="slCashCur">The counter session open now: <span id="slCurLabel"></span> (dated now)</label></div>
+      <div id="slCashClosedWarn" class="alert alert-warning small py-1 px-2 mt-2 mb-0 d-none"></div>
+      <div id="slCashNoCur" class="small text-muted mt-1 d-none">No counter session is open now, so only the receipt's own session can take the reversal (or open a session on Counter Cash first).</div>
+    </div>
     <label class="form-label">Reason</label><textarea name="void_reason" class="form-control" rows="2" required maxlength="255"></textarea></div>
   <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-danger">Void</button></div>
 </form></div></div>
 <script>
 document.addEventListener('DOMContentLoaded',function(){
   var form=document.getElementById('slVoidForm'),modalEl=document.getElementById('slVoidModal');
-  document.querySelectorAll('.sl-void-btn').forEach(function(b){b.onclick=function(){form.action=b.dataset.action;document.getElementById('slVoidRef').textContent=b.dataset.ref;form.void_reason.value='';bootstrap.Modal.getOrCreateInstance(modalEl).show();};});
+  document.querySelectorAll('.sl-void-btn').forEach(function(b){b.onclick=function(){form.action=b.dataset.action;document.getElementById('slVoidRef').textContent=b.dataset.ref;form.void_reason.value='';slCashChoice(b.dataset.cash);bootstrap.Modal.getOrCreateInstance(modalEl).show();};});
+  // Cash receipts: when the receipt's session is not the one open now, the user picks where the reversal goes.
+  function slCashChoice(raw){
+    var box=document.getElementById('slVoidCash'),orig=document.getElementById('slCashOrig'),cur=document.getElementById('slCashCur'),warn=document.getElementById('slCashClosedWarn'),noCur=document.getElementById('slCashNoCur');
+    var c=null;try{c=JSON.parse(raw||'null');}catch(e){c=null;}
+    orig.checked=false;cur.checked=false;orig.required=false;
+    if(!c||c.same){box.classList.add('d-none');return;}
+    box.classList.remove('d-none');orig.required=true;
+    document.getElementById('slVoidAmt').textContent=c.amount;
+    document.getElementById('slOrigLabel').textContent=c.orig+(c.origClosed?' — closed '+c.origClosed:' — open');
+    document.getElementById('slCurLabel').textContent=c.cur||'none';
+    cur.disabled=!c.cur;cur.parentElement.classList.toggle('text-muted',!c.cur);noCur.classList.toggle('d-none',!!c.cur);
+    warn.classList.add('d-none');
+    var sync=function(){if(orig.checked&&c.origClosed){warn.textContent='That session was closed and counted on '+c.origClosed+'. Its expected cash will go down by Rs. '+c.amount+' and will no longer match the counted cash.';warn.classList.remove('d-none');}else{warn.classList.add('d-none');}};
+    orig.onchange=sync;cur.onchange=sync;
+  }
   var name=<?=json_encode($customer['name'])?>,openBal=<?=json_encode('Rs. '.number_format((float)$customer['opening_balance'],2))?>,curBal=<?=json_encode('Rs. '.number_format((float)$customer['credit_due'],2))?>;
   var heads=['Date','Reference','Type','Amount','Paid','Added to Receivable','Payment Received','Balance','Status'];
   function slData(){

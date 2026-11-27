@@ -181,9 +181,24 @@ class Customers extends Controller
                 'kg'=>(function() use($itemsBySale,$s){$n=0;foreach($itemsBySale[(int)$s['id']]??[] as $i){$n+=(float)$i['gas_weight_kg'];}return $n;})()];
         }
         $receiptDetail=$db->table('customer_receipts')->where(['customer_id'=>$id,'location_id'=>$locationId])->get()->getResultArray();
+        // Where a cash receipt's void can put its cash reversal: its own session or the one open now.
+        $receiptSessions=(new \App\Services\SalesService())->receiptCashSessions(array_column($receiptDetail,'id'));
+        $openSession=(new \App\Services\CashService())->openSessionForLocation($locationId,false);
+        $sessionLabel=static fn(array $s)=>'Session #'.(int)$s['id'].' '.($s['register_code']??'').' opened '.date('d-M-Y H:i',strtotime((string)$s['opened_at']));
         foreach($receiptDetail as $r){
             $insideSale=str_starts_with((string)($r['notes']??''),'OS settlement collected with sale ');
-            $events[]=['at'=>$r['receipt_at'],'ref'=>$r['receipt_no'],'type'=>ucfirst((string)$r['payment_mode']).(!empty($r['reference_no'])?' '.$r['reference_no']:''),'amount'=>null,'paid'=>null,'added'=>null,'made'=>(float)$r['amount'],'status'=>$r['status'],'kind'=>'receipt','id'=>(int)$r['id'],'voidable'=>!$insideSale];
+            $cashChoice=null;
+            if((string)$r['payment_mode']==='cash' && isset($receiptSessions[(int)$r['id']])){
+                $orig=$receiptSessions[(int)$r['id']];
+                $cashChoice=[
+                    'same'=>$openSession && (int)$openSession['id']===(int)$orig['id'],
+                    'orig'=>$sessionLabel($orig),
+                    'origClosed'=>$orig['status']==='closed' ? date('d-M-Y H:i',strtotime((string)$orig['closed_at'])) : '',
+                    'cur'=>$openSession ? $sessionLabel($openSession) : '',
+                    'amount'=>number_format((float)$r['amount'],2),
+                ];
+            }
+            $events[]=['at'=>$r['receipt_at'],'ref'=>$r['receipt_no'],'type'=>ucfirst((string)$r['payment_mode']).(!empty($r['reference_no'])?' '.$r['reference_no']:''),'amount'=>null,'paid'=>null,'added'=>null,'made'=>(float)$r['amount'],'status'=>$r['status'],'kind'=>'receipt','id'=>(int)$r['id'],'voidable'=>!$insideSale,'cash_choice'=>$cashChoice];
         }
         usort($events,static fn($x,$y)=>[$x['at'],$x['kind']==='sale'?0:1,$x['id']]<=>[$y['at'],$y['kind']==='sale'?0:1,$y['id']]);
         $running=CustomerModel::openingAt($customer,$locationId);$seq=0;
@@ -203,7 +218,9 @@ class Customers extends Controller
         try{
             if(!PermissionService::allows('POS_VOID')) throw new \RuntimeException('You are not authorized to void receipts.');
             $reason=trim((string)$this->request->getPost('void_reason'));
-            $customerId=(new \App\Services\SalesService())->voidCustomerReceipt($receiptId,(int)session()->get('user_id'),(int)session()->get('location_id'),$reason);
+            $cashTarget=(string)$this->request->getPost('cash_target');
+            if(!in_array($cashTarget,['original','current'],true)) $cashTarget='';
+            $customerId=(new \App\Services\SalesService())->voidCustomerReceipt($receiptId,(int)session()->get('user_id'),(int)session()->get('location_id'),$reason,$cashTarget);
             return redirect()->to('/customers/ledger/'.$customerId.'#customerDetails')->with('success','Customer receipt voided. The customer balance and any cash were reversed.');
         }catch(\Throwable $e){
             $back=(string)$this->request->getPost('return_to');
