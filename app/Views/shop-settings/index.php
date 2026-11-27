@@ -291,6 +291,13 @@
                 <div class="row g-3">
                     <div class="col-md-6"><label class="form-label">Default Payment Mode</label><select name="default_payment_mode" class="form-select"><?php foreach(\App\Services\PaymentModes::MODES + ['credit'=>'Credit'] as $value=>$label): ?><option value="<?= esc($value) ?>" <?= ($settings['default_payment_mode'] ?? 'cash') === $value ? 'selected' : '' ?>><?= esc($label) ?></option><?php endforeach; ?></select><div class="form-text">New POS payment lines use this mode by default.</div></div>
                     <div class="col-md-6"><label class="form-label">Counter Cash</label><div class="form-control bg-light">Open cash session is required for cash sales and cash movements.</div></div>
+                    <div class="col-12">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" name="cash_session_per_day" id="cashSessionPerDay" value="1" <?= !empty($settings['cash_session_per_day']) ? 'checked' : '' ?>>
+                            <label class="form-check-label" for="cashSessionPerDay">One counter session per day</label>
+                        </div>
+                        <div class="form-text">Off (default): a session stays open until you close it, for a day, a week or a month, and every cash entry goes into it with its own date; the session total is all its cash. On: a session belongs to one date, cash of another date (System Date) needs that date's own session, and yesterday's session may still be used after midnight.</div>
+                    </div>
                     <div class="col-12"><div class="alert alert-light border mb-0">Cash, cheque, online and credit remain supported. Non-cash payments do not increase Counter Cash.</div></div>
                 </div>
             </div>

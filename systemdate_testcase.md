@@ -15,6 +15,7 @@ Spec: `tests/e2e/systemdate.spec.mjs`. Run headed: `npx playwright test tests/e2
 | SD-08 | POS offers only stock that was free on the System Date | PASS |
 | SD-09 | Each branch keeps its own System Date | PASS (full run with 2 branches; skips on a 1-branch DB) |
 | SD-10 | System Date changes are in the audit log | PASS |
+| SD-11 | Default (one session per day off): a session stays open across dates and takes back-dated cash | PASS |
 
 ## Progress
 | Date | Run | Result | Notes |
@@ -23,3 +24,4 @@ Spec: `tests/e2e/systemdate.spec.mjs`. Run headed: `npx playwright test tests/e2
 | 2026-11-26 | Full suite, one spec at a time, fresh DB | 95 pass / 14 fail / 2 skip | No failure from System Date code. Fails: UI-09 (single-threaded PHP test server), multibranch MB-13/16/17/18 (absolute stock totals after other specs), MB-27/30 (back-dated cash session left open by SD tests, now cleaned up), runtime E2E-004..007/012/013 (QA seed customer QA-E2E-CUST and C6 type not in repo). |
 | 2026-11-26 | SD fixes re-run, fresh DB | SD-00..08, SD-10 PASS; SD-09 skip (1 branch) | Added SD-00 stock setup, afterEach reset (date today, cash closed), SD-07 real time, popup reload wait. |
 | 2026-11-27 | Full gate run 9: fresh DB, migrations twice, all specs one at a time on nginx + 4 php-cgi | **115 / 115 PASS, 0 fail** | pricing 57, custody 9, multibranch 23, systemdate 11, runtime 15. Fixes since run 1: local assets (no CDN), transfer date "now" window, overnight cash session when following today, runtime QA seed, multibranch stock baseline, test timing fixes. |
+| 2026-11-27 | Cash session per day setting (migration 055), impacted areas only (owner choice) | setup 9/9, systemdate 11 pass + SD-09 skip (1-branch DB), runtime 15/15 | Migrations 054+055 run twice clean. Production dump copy: no existing data changed, all branches default off (01-Nov session keeps working). SD-05 runs with the setting on, SD-11 with it off. |

@@ -13,8 +13,11 @@ class CashService {
    $register=$this->db->query("SELECT * FROM cash_registers WHERE location_id=? AND is_active=1 ORDER BY id LIMIT 1 FOR UPDATE",[$locationId])->getRowArray();
    if(!$register) throw new RuntimeException('No active cash register exists for this location.');
    $existing=$this->db->table('cash_sessions')->where('register_id',$register['id'])->where('status','open')->get()->getRowArray();
-   if($existing) throw self::otherDateConflict($existing,BranchContext::today($locationId),'open a new counter session');
-   // One counter session per System Date: the session carries the branch's working date.
+   if($existing) {
+    // Only one session can be open. With one session per day it is explained against the System Date.
+    throw self::otherDateConflict($existing,self::perDay($locationId)?BranchContext::today($locationId):substr((string)$existing['opened_at'],0,10),'open a new counter session');
+   }
+   // The session carries the branch's working date (System Date + clock time).
    $openedAt=BranchContext::now($locationId);
    $this->db->table('cash_sessions')->insert(['register_id'=>$register['id'],'opened_by'=>$userId,'opened_at'=>$openedAt,'opening_cash'=>$openingCash,'notes'=>trim($notes)?:null]);
    $id=(int)$this->db->insertID();
@@ -24,14 +27,26 @@ class CashService {
   } catch(\Throwable $e){$this->db->transRollback();throw $e;}
  }
  /**
-  * The open counter session of a branch. Each session belongs to one date (owner decision 2026-11-26).
-  * When posting ($forPosting, default: on POST requests) a session opened on another date than the
-  * System Date is refused with an explanation of what to do.
+  * Shop Settings -> Cash -> One counter session per day (shop_settings.cash_session_per_day, migration 055).
+  * Off (default, owner decision 2026-11-27): a session stays open until a user closes it, for a day, a week
+  * or a month, and takes cash of any date; each entry keeps its own transaction date.
+  * On: a session belongs to one date (see openSessionForLocation).
+  */
+ public static function perDay(int $locationId): bool {
+  try {
+   $row=Database::connect()->table('shop_settings')->select('cash_session_per_day')->where('location_id',$locationId)->get()->getRowArray();
+   return (int)($row['cash_session_per_day']??0)===1;
+  } catch(\Throwable $e) { return false; } // column not migrated yet
+ }
+ /**
+  * The open counter session of a branch.
+  * With one session per day on, posting ($forPosting, default: on POST requests) into a session opened on
+  * another date than the System Date is refused with an explanation of what to do.
   */
  public function openSessionForLocation(int $locationId, ?bool $forPosting=null): ?array {
   $session=$this->findOpenSession($locationId);
   if($forPosting===null) $forPosting=!is_cli() && strtoupper((string)service('request')->getMethod())==='POST';
-  if($session && $forPosting && substr((string)$session['opened_at'],0,10)!==BranchContext::today($locationId) && !self::overnightShift($session,$locationId)) {
+  if($session && $forPosting && self::perDay($locationId) && substr((string)$session['opened_at'],0,10)!==BranchContext::today($locationId) && !self::overnightShift($session,$locationId)) {
    throw self::otherDateConflict($session,BranchContext::today($locationId),'post cash');
   }
   return $session;
@@ -106,9 +121,16 @@ class CashService {
    if(!$session) throw new RuntimeException('Cash session not found.');
    if($session['status']!=='open') throw new RuntimeException('Cash session is already closed.');
    $summary=$this->summary($sessionId);
-   // A session closes on its own date: when the System Date has moved on, it closes at the end of that day.
    $sessionDate=substr((string)$session['opened_at'],0,10);
-   $closedAt=($sessionDate===BranchContext::today() || self::overnightShift($session,BranchContext::currentId()))?BranchContext::now():$sessionDate.' 23:59:59';
+   $locationId=BranchContext::currentId();
+   if(self::perDay($locationId)) {
+    // One session per day: it closes on its own date; when the System Date has moved on, at the end of that day.
+    $closedAt=($sessionDate===BranchContext::today() || self::overnightShift($session,$locationId))?BranchContext::now():$sessionDate.' 23:59:59';
+   } else {
+    // A session that spans dates closes now, never before its last cash entry.
+    $last=(string)($this->db->table('cash_transactions')->selectMax('transaction_at','m')->where('cash_session_id',$sessionId)->get()->getRowArray()['m']??'');
+    $closedAt=max(BranchContext::now(),$last);
+   }
    if($closedAt<$session['opened_at']) $closedAt=$session['opened_at'];
    $this->db->table('cash_sessions')->where('id',$sessionId)->update(['closed_by'=>$userId,'closed_at'=>$closedAt,'counted_cash'=>$countedCash,'status'=>'closed','notes'=>trim($notes)?:$summary['session']['notes']]);
    if(!$this->db->transStatus()) throw new RuntimeException('Cash session could not be closed.');

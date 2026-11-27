@@ -89,6 +89,15 @@ async function openCash(page) {
   if (await open.count()) { await Promise.all([page.waitForLoadState('load'), open.first().click()]); }
 }
 
+/** Shop Settings -> Cash -> One counter session per day. */
+async function setCashPerDay(page, on) {
+  await page.goto('shop-settings', { waitUntil: 'load' });
+  await page.click('button[data-bs-target="#cash"]');
+  await page.setChecked('#cashSessionPerDay', on);
+  await Promise.all([page.waitForLoadState('load'), page.getByRole('button', { name: 'Save Shop Settings' }).click()]);
+  await expect(page.locator('.alert-success')).toContainText('saved');
+}
+
 test.afterAll(async ({ browser }) => {
   const page = await browser.newPage();
   try { await login(page); await setSystemDate(page, null); } catch { /* best effort */ }
@@ -176,7 +185,9 @@ test('SD-04 screens open on the System Date (POS time, purchase date, receipt da
 });
 
 test('SD-05 counter cash: one session per System Date, cash of another date is refused with a popup', async ({ page }) => {
+  test.setTimeout(300_000); // two Shop Settings saves, two date changes, cash open / close and a popup
   await login(page);
+  await setCashPerDay(page, true); // the per-day rule is a Shop Setting, off by default
   await setSystemDate(page, null);
   await closeOpenCash(page);
   await openCash(page); // session of today
@@ -196,6 +207,7 @@ test('SD-05 counter cash: one session per System Date, cash of another date is r
   // The button saves the date, then reloads the page: wait for that reload.
   await Promise.all([page.waitForEvent('load', { timeout: 60_000 }), modal.getByRole('button', { name: /Change System Date to/ }).click()]);
   await expect(page.locator('#systemDateBox')).toHaveAttribute('data-state', 'today');
+  await setCashPerDay(page, false); // back to the default for the other cases
 });
 
 test('SD-06 a back-dated cash sale is dated the System Date and goes into that day\'s session', async ({ page }) => {
@@ -276,6 +288,25 @@ test('SD-09 each branch has its own System Date', async ({ page }) => {
   await Promise.all([page.waitForLoadState('load'), page.locator('.dropdown-menu button.dropdown-item', { hasText: first }).first().click()]);
   await expect(page.locator('#systemDateLabel')).toHaveText(dmy(back));
   await setSystemDate(page, null);
+});
+
+test('SD-11 default: a counter session stays open across dates and takes back-dated cash', async ({ page }) => {
+  test.setTimeout(300_000);
+  await login(page);
+  await setCashPerDay(page, false);
+  await setSystemDate(page, null);
+  await closeOpenCash(page);
+  await openCash(page); // session of today
+  await setSystemDate(page, back);
+  // A cash entry on the back date goes into the open session, dated the back date.
+  await page.goto('cash', { waitUntil: 'load' });
+  const move = page.locator('form[action$="cash/move"]');
+  await move.locator('input[name="amount"]').fill('10');
+  await Promise.all([page.waitForLoadState('load'), move.locator('button').first().click()]);
+  await expect(page.locator('#lpgConflictModal')).toHaveCount(0);
+  await expect(page.locator('.alert-success').filter({ hasText: 'Cash movement posted' })).toHaveCount(1);
+  await page.goto(`cash/history?from=${iso(back)}&to=${iso(back)}`, { waitUntil: 'load' });
+  await expect(page.locator('body')).toContainText(iso(back));
 });
 
 test('SD-10 every System Date change is in the audit log', async ({ page }) => {
