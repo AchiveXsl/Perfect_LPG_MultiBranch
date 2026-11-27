@@ -216,6 +216,8 @@ class ShopSettings extends Controller
                 // Blank = back to the start of the current month.
                 'transfer_backdate_days' => trim((string) $this->request->getPost('transfer_backdate_days')) === '' ? null : max(0, min(3650, (int) $this->request->getPost('transfer_backdate_days'))),
                 'purchase_void_enabled' => $purchaseVoidEnabled,
+                // Off: a counter session stays open until closed and takes cash of any date.
+                'cash_session_per_day' => $this->request->getPost('cash_session_per_day') ? 1 : 0,
                 'backup_enabled' => $this->request->getPost('backup_enabled') ? 1 : 0,
                 'db_backup_url' => trim((string) $this->request->getPost('db_backup_url')) ?: null,
                 'backup_notes' => trim((string) $this->request->getPost('backup_notes')) ?: null,
